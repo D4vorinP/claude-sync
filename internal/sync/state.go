@@ -156,7 +156,7 @@ func (s *SyncState) MarkUploaded(relativePath string) {
 }
 
 // Unlike MarkUploaded this stores the storage's own timestamp, the value Pull
-// compares against, so a local clock running behind cannot raise the copy again.
+// compares against, so a local clock running behind cannot make a known copy look new.
 func (s *SyncState) MarkRemoteSeen(relativePath string, remoteTime time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

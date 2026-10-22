@@ -473,9 +473,28 @@ func (s *Syncer) uploadFile(ctx context.Context, relativePath string) error {
 	info, _ := os.Stat(fullPath)
 	hash, _ := HashFile(fullPath)
 	s.state.UpdateFile(relativePath, info, hash)
-	s.state.MarkUploaded(relativePath)
+	if lastModified, ok := s.listedLastModified(ctx, remoteKey); ok {
+		s.state.MarkRemoteSeen(relativePath, lastModified)
+	} else {
+		s.state.MarkUploaded(relativePath)
+	}
 
 	return nil
+}
+
+// listedLastModified reads an object's LastModified the way Pull sees it: a local clock just
+// behind the storage's makes own uploads look new, and HEAD's Last-Modified has whole seconds.
+func (s *Syncer) listedLastModified(ctx context.Context, remoteKey string) (time.Time, bool) {
+	objs, err := s.storage.List(ctx, remoteKey)
+	if err != nil {
+		return time.Time{}, false
+	}
+	for _, obj := range objs {
+		if obj.Key == remoteKey {
+			return obj.LastModified, true
+		}
+	}
+	return time.Time{}, false
 }
 
 // downloadFile downloads and decrypts a file from remote storage.

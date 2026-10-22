@@ -20,6 +20,8 @@ import (
 type mockStorage struct {
 	mu      sync.Mutex
 	objects map[string]mockObject
+	// clockAhead plays a storage service whose clock runs ahead of this machine's.
+	clockAhead time.Duration
 }
 
 type mockObject struct {
@@ -36,7 +38,7 @@ func (m *mockStorage) Upload(_ context.Context, key string, data []byte) error {
 	defer m.mu.Unlock()
 	cp := make([]byte, len(data))
 	copy(cp, data)
-	m.objects[key] = mockObject{data: cp, lastModified: time.Now()}
+	m.objects[key] = mockObject{data: cp, lastModified: time.Now().Add(m.clockAhead)}
 	return nil
 }
 
@@ -444,6 +446,53 @@ func TestPullRaisesEachRemoteVersionOnce(t *testing.T) {
 	}
 	if len(result.Uploaded) != 1 || result.Uploaded[0] != "settings.json" {
 		t.Errorf("Expected push to upload the kept local file, got %v", result.Uploaded)
+	}
+}
+
+func TestPullKnowsOwnUploadWhenStorageClockIsAhead(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+	env.store.clockAhead = 500 * time.Millisecond
+
+	writeFile(t, env.claudeDir, "settings.json", `{"v":1}`)
+	if _, err := env.syncer.Push(ctx); err != nil {
+		t.Fatalf("Push failed: %v", err)
+	}
+
+	result, err := env.syncer.Pull(ctx)
+	if err != nil {
+		t.Fatalf("Pull failed: %v", err)
+	}
+	if len(result.Downloaded) != 0 || len(result.Conflicts) != 0 {
+		t.Errorf("Own upload read as a remote change: downloaded %v, conflicts %v", result.Downloaded, result.Conflicts)
+	}
+
+	writeFile(t, env.claudeDir, "settings.json", `{"v":1,"grown":true}`)
+	result, err = env.syncer.Pull(ctx)
+	if err != nil {
+		t.Fatalf("Pull failed: %v", err)
+	}
+	if len(result.Conflicts) != 0 {
+		t.Errorf("A local change after our own push must not conflict, got %v", result.Conflicts)
+	}
+
+	if _, err := env.syncer.Push(ctx); err != nil {
+		t.Fatalf("Push failed: %v", err)
+	}
+	encrypted, err := env.syncer.encryptor.Encrypt([]byte(`{"v":"other device"}`))
+	if err != nil {
+		t.Fatalf("Encrypt failed: %v", err)
+	}
+	time.Sleep(10 * time.Millisecond)
+	if err := env.store.Upload(ctx, "settings.json.age", encrypted); err != nil {
+		t.Fatalf("Upload to mock failed: %v", err)
+	}
+	result, err = env.syncer.Pull(ctx)
+	if err != nil {
+		t.Fatalf("Pull failed: %v", err)
+	}
+	if len(result.Downloaded) != 1 {
+		t.Errorf("Another device's upload must still be pulled, downloaded %v", result.Downloaded)
 	}
 }
 
