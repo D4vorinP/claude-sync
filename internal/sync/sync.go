@@ -341,6 +341,8 @@ func (s *Syncer) Pull(ctx context.Context) (*SyncResult, error) {
 					})
 					if err := s.handleConflict(ctx, localPath, remoteObj); err != nil {
 						result.Errors = append(result.Errors, err)
+					} else {
+						s.state.MarkRemoteSeen(localPath, remoteObj.LastModified)
 					}
 					continue
 				}

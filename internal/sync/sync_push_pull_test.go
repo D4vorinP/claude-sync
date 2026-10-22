@@ -394,6 +394,58 @@ func TestPullDetectsConflicts(t *testing.T) {
 	}
 }
 
+func TestPullRaisesEachRemoteVersionOnce(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	uploadRemote := func(content string) {
+		t.Helper()
+		encrypted, err := env.syncer.encryptor.Encrypt([]byte(content))
+		if err != nil {
+			t.Fatalf("Encrypt failed: %v", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+		if err := env.store.Upload(ctx, "settings.json.age", encrypted); err != nil {
+			t.Fatalf("Upload to mock failed: %v", err)
+		}
+	}
+	pullConflicts := func() int {
+		t.Helper()
+		result, err := env.syncer.Pull(ctx)
+		if err != nil {
+			t.Fatalf("Pull failed: %v", err)
+		}
+		return len(result.Conflicts)
+	}
+
+	writeFile(t, env.claudeDir, "settings.json", `{"v":"local-1"}`)
+	if _, err := env.syncer.Push(ctx); err != nil {
+		t.Fatalf("Push failed: %v", err)
+	}
+	writeFile(t, env.claudeDir, "settings.json", `{"v":"local-2"}`)
+	uploadRemote(`{"v":"remote-2"}`)
+
+	if n := pullConflicts(); n != 1 {
+		t.Fatalf("first pull: expected 1 conflict, got %d", n)
+	}
+	if n := pullConflicts(); n != 0 {
+		t.Errorf("second pull with the remote unchanged: expected 0 conflicts, got %d", n)
+	}
+
+	uploadRemote(`{"v":"remote-3"}`)
+	if n := pullConflicts(); n != 1 {
+		t.Errorf("pull after a new remote version: expected 1 conflict, got %d", n)
+	}
+
+	result, err := env.syncer.Push(ctx)
+	if err != nil {
+		t.Fatalf("Push failed: %v", err)
+	}
+	if len(result.Uploaded) != 1 || result.Uploaded[0] != "settings.json" {
+		t.Errorf("Expected push to upload the kept local file, got %v", result.Uploaded)
+	}
+}
+
 func TestNoConflictWhenOnlyRemoteChanged(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
