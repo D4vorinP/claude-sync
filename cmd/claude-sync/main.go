@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -78,8 +79,18 @@ func main() {
 	)
 
 	if err := rootCmd.Execute(); err != nil {
-		os.Exit(1)
+		os.Exit(exitCode(err))
 	}
+}
+
+// exitCode gives a halted sync its own code, so a scheduled run can tell "upgrade
+// this machine" apart from an ordinary failure.
+func exitCode(err error) int {
+	var tooNew *sync.FormatTooNewError
+	if errors.As(err, &tooNew) {
+		return 3
+	}
+	return 1
 }
 
 func printBanner() {

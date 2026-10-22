@@ -177,6 +177,14 @@ func (s *Syncer) log(format string, args ...interface{}) {
 func (s *Syncer) Push(ctx context.Context) (*SyncResult, error) {
 	result := &SyncResult{}
 
+	markers, err := s.storage.List(ctx, FormatKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read storage format: %w", err)
+	}
+	if err := s.checkFormat(ctx, markers, true); err != nil {
+		return nil, err
+	}
+
 	s.progress(ProgressEvent{Action: "scan", Path: "Detecting changes..."})
 
 	changes, err := s.state.DetectChanges(s.claudeDir, s.syncPaths(), s.isExcluded)
@@ -293,6 +301,12 @@ func (s *Syncer) Pull(ctx context.Context) (*SyncResult, error) {
 	if len(remoteObjects) == 0 {
 		s.progress(ProgressEvent{Action: "scan", Complete: true})
 		return result, nil
+	}
+
+	// The marker is read from this same listing: an upgraded device raises it before
+	// its first upload, so any newer-format object listed here comes with its marker.
+	if err := s.checkFormat(ctx, remoteObjects, false); err != nil {
+		return nil, err
 	}
 
 	// Download manifest for mtime restoration (best-effort, may not exist)
