@@ -10,6 +10,14 @@ import (
 	"github.com/tawanorg/claude-sync/internal/storage"
 )
 
+// setHome points the home directory at dir. os.UserHomeDir reads USERPROFILE on
+// Windows, so a test that sets only HOME would act on the real home folder there.
+func setHome(t *testing.T, dir string) {
+	t.Helper()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+}
+
 func TestScopedSyncPaths(t *testing.T) {
 	t.Run("sessions scope is limited to portable session data", func(t *testing.T) {
 		got := ScopedSyncPaths("sessions")
@@ -92,7 +100,7 @@ func TestClaudeDir(t *testing.T) {
 func TestSaveAndLoad(t *testing.T) {
 	// Create a temporary directory to use as home
 	tmpDir := t.TempDir()
-	t.Setenv("HOME", tmpDir)
+	setHome(t, tmpDir)
 
 	// Create config directory
 	configDir := filepath.Join(tmpDir, ConfigDir)
@@ -160,7 +168,7 @@ encryption_key_path: ~/.claude-sync/age-key.txt
 
 func TestLoadNotFound(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Setenv("HOME", tmpDir)
+	setHome(t, tmpDir)
 
 	_, err := Load()
 	if err == nil {
@@ -174,7 +182,7 @@ func TestLoadNotFound(t *testing.T) {
 
 func TestExists(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Setenv("HOME", tmpDir)
+	setHome(t, tmpDir)
 
 	// Should not exist initially
 	if Exists() {

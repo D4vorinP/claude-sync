@@ -9,7 +9,7 @@ import (
 func TestResetClearsConfigDir(t *testing.T) {
 	// Create temp home directory
 	tmpDir := t.TempDir()
-	t.Setenv("HOME", tmpDir)
+	setHome(t, tmpDir)
 
 	// Create mock config directory
 	configDir := filepath.Join(tmpDir, ".claude-sync")
@@ -47,7 +47,7 @@ func TestResetClearsConfigDir(t *testing.T) {
 
 func TestResetClearsStateFile(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Setenv("HOME", tmpDir)
+	setHome(t, tmpDir)
 
 	// Create config dir and state file
 	configDir := filepath.Join(tmpDir, ".claude-sync")
@@ -79,7 +79,7 @@ func TestResetClearsStateFile(t *testing.T) {
 
 func TestResetPreservesClaudeDir(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Setenv("HOME", tmpDir)
+	setHome(t, tmpDir)
 
 	// Create both directories
 	configDir := filepath.Join(tmpDir, ".claude-sync")

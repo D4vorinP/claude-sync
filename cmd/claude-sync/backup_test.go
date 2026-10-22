@@ -14,7 +14,7 @@ import (
 // world-readable either.
 func TestCreateBackupSetsRestrictivePermissions(t *testing.T) {
 	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
+	setHome(t, tmpHome)
 
 	// Populate ~/.claude with a file inside a syncable subdirectory so that
 	// createBackup also creates a nested directory we can stat.
