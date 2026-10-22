@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -456,6 +457,9 @@ func TestSaveCreatesDirectory(t *testing.T) {
 }
 
 func TestSaveFilePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no Unix permission bits; Go reports 0666 for every writable file")
+	}
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "settings.json")
 

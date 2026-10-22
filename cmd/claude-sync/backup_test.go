@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/tawanorg/claude-sync/internal/config"
@@ -13,6 +14,9 @@ import (
 // contain API keys, prompts, and personal context, so backups must not be
 // world-readable either.
 func TestCreateBackupSetsRestrictivePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no Unix permission bits; Go reports 0666/0777 for every file")
+	}
 	tmpHome := t.TempDir()
 	setHome(t, tmpHome)
 

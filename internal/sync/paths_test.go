@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -227,9 +228,12 @@ func TestCrossDeviceSessionSync(t *testing.T) {
 		t.Errorf("content = %s, want %s", data, want)
 	}
 
-	info, _ := os.Stat(localPath)
-	if info.Mode().Perm() != 0600 {
-		t.Errorf("downloaded file mode = %v, want 0600", info.Mode().Perm())
+	// Windows has no Unix permission bits: Go reports 0666 for every writable file.
+	if runtime.GOOS != "windows" {
+		info, _ := os.Stat(localPath)
+		if info.Mode().Perm() != 0600 {
+			t.Errorf("downloaded file mode = %v, want 0600", info.Mode().Perm())
+		}
 	}
 }
 

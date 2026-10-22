@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -679,6 +680,9 @@ func TestPullEmptyRemoteIsNoop(t *testing.T) {
 // create the parent directory — os.MkdirAll does not modify the mode of
 // pre-existing directories, and env.claudeDir was created at 0755 by setup.
 func TestPullSetsRestrictivePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no Unix permission bits; Go reports 0666/0777 for every file")
+	}
 	env := setupTestEnv(t)
 	ctx := context.Background()
 
