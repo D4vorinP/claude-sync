@@ -663,3 +663,42 @@ func TestPullSetsRestrictivePermissions(t *testing.T) {
 		t.Errorf("Expected dir mode 0700, got %o", got)
 	}
 }
+
+func TestPushKeepsRemoteMCPConfig(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	env.syncer.cfg.ClaudeJSONOverride = filepath.Join(t.TempDir(), "claude.json")
+	writeFile(t, filepath.Dir(env.syncer.cfg.ClaudeJSONOverride), "claude.json",
+		`{"mcpServers":{"test-server":{"command":"node","args":["server.js"]}}}`)
+
+	if _, err := env.syncer.PushMCP(ctx); err != nil {
+		t.Fatalf("PushMCP failed: %v", err)
+	}
+	mcpKey := config.MCPRemoteKey + ".age"
+	if _, err := env.store.Head(ctx, mcpKey); err != nil {
+		t.Fatalf("PushMCP did not upload %s: %v", mcpKey, err)
+	}
+
+	writeFile(t, env.claudeDir, "CLAUDE.md", "# My Settings")
+	result, err := env.syncer.Push(ctx)
+	if err != nil {
+		t.Fatalf("Push failed: %v", err)
+	}
+	for _, p := range result.Deleted {
+		if p == config.MCPRemoteKey {
+			t.Errorf("Push deleted %s, which has no file under the claude dir by design", p)
+		}
+	}
+	if _, err := env.store.Head(ctx, mcpKey); err != nil {
+		t.Errorf("Push removed %s from remote: %v", mcpKey, err)
+	}
+
+	mcp, err := env.syncer.PushMCP(ctx)
+	if err != nil {
+		t.Fatalf("second PushMCP failed: %v", err)
+	}
+	if !mcp.Unchanged {
+		t.Errorf("Expected unchanged MCP config not to be re-uploaded, pushed %d servers", mcp.ServersPushed)
+	}
+}

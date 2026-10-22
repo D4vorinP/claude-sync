@@ -356,6 +356,11 @@ func (s *SyncState) DetectChanges(claudeDir string, syncPaths []string, excludeF
 	s.mu.Unlock()
 
 	for _, relPath := range knownPaths {
+		// MCP sync keeps its entry in this map but its source is ~/.claude.json,
+		// so it never has a file under claudeDir and must not read as deleted.
+		if strings.HasPrefix(relPath, "_external/") {
+			continue
+		}
 		if _, exists := localFiles[relPath]; !exists {
 			changes = append(changes, FileChange{
 				Path:   relPath,
