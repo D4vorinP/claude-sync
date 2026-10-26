@@ -234,6 +234,45 @@ func TestPullResumesForkOnSideWithNewestEntry(t *testing.T) {
 	}
 }
 
+func TestPullBreaksNewestEntryTieByLastPromptLeaf(t *testing.T) {
+	root := `{"uuid":"a","type":"user","timestamp":"2026-10-05T02:00:00.000Z"}` + "\n"
+	side := `{"uuid":"s","parentUuid":"a","type":"user","timestamp":"2026-10-05T02:48:00.000Z"}` + "\n"
+	ask := `{"uuid":"q","parentUuid":"a","type":"user","timestamp":"2026-10-05T05:10:00.000Z"}` + "\n"
+	tip := `{"uuid":"t","parentUuid":"q","type":"system","timestamp":"2026-10-05T05:14:00.000Z"}` + "\n"
+	askPrompt := `{"type":"last-prompt","leafUuid":"q"}`
+	tipPrompt := `{"type":"last-prompt","leafUuid":"t"}`
+	withSide := root + side + `{"type":"last-prompt","leafUuid":"s"}` + "\n" + ask + askPrompt + "\n" + tip
+	atTip := root + ask + askPrompt + "\n" + tip + tipPrompt + "\n"
+
+	tests := []struct {
+		name          string
+		local, remote string
+	}{
+		{"local leaf at tip", atTip, withSide},
+		{"remote leaf at tip", withSide, atTip},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := setupTestEnv(t)
+			name := "projects/p1/sess.jsonl"
+			pushThenDesync(t, env, name, root, tt.local, tt.remote)
+
+			if _, err := env.syncer.Pull(context.Background()); err != nil {
+				t.Fatalf("Pull failed: %v", err)
+			}
+			var lastPrompt string
+			for _, line := range strings.Split(readFile(t, env.claudeDir, name), "\n") {
+				if strings.Contains(line, `"type":"last-prompt"`) {
+					lastPrompt = line
+				}
+			}
+			if lastPrompt != tipPrompt {
+				t.Errorf("last last-prompt = %s, want %s", lastPrompt, tipPrompt)
+			}
+		})
+	}
+}
+
 func TestPullNonJSONLConflictBehaviorUnchanged(t *testing.T) {
 	env := setupTestEnv(t)
 	pushThenDesync(t, env, "CLAUDE.md", "v1", "local-change", "remote-change")

@@ -24,20 +24,46 @@ type sessionRecord struct {
 	UUID      string `json:"uuid"`
 	Type      string `json:"type"`
 	Timestamp string `json:"timestamp"`
+	LeafUUID  string `json:"leafUuid"`
 }
 
-func newestEntryTime(payload []byte) time.Time {
-	var newest time.Time
+type sessionTimes struct {
+	newest, leaf time.Time
+}
+
+func sessionTimesOf(payload []byte) sessionTimes {
+	stamps := make(map[string]time.Time)
+	var leafUUID string
+	var st sessionTimes
 	_ = forEachLine(bytes.NewReader(payload), func(line []byte) {
 		var r sessionRecord
-		if json.Unmarshal(line, &r) != nil || r.UUID == "" {
+		if json.Unmarshal(line, &r) != nil {
 			return
 		}
-		if ts, err := time.Parse(time.RFC3339Nano, r.Timestamp); err == nil && ts.After(newest) {
-			newest = ts
+		if r.Type == "last-prompt" {
+			leafUUID = r.LeafUUID
+		}
+		if r.UUID == "" {
+			return
+		}
+		if ts, err := time.Parse(time.RFC3339Nano, r.Timestamp); err == nil {
+			stamps[r.UUID] = ts
+			if ts.After(st.newest) {
+				st.newest = ts
+			}
 		}
 	})
-	return newest
+	st.leaf = stamps[leafUUID]
+	return st
+}
+
+// A side holding the other's newest entry plus an older branch ties on the newest entry,
+// so the tie goes to the side whose own last prompt was at the later point of the session.
+func (st sessionTimes) newerThan(other sessionTimes) bool {
+	if !st.newest.Equal(other.newest) {
+		return st.newest.After(other.newest)
+	}
+	return st.leaf.After(other.leaf)
 }
 
 // MergeSessionPayloads unions two genuinely diverged session transcripts.

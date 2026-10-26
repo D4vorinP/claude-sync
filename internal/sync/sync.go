@@ -870,7 +870,7 @@ func (s *Syncer) resolveJSONLConflict(ctx context.Context, relativePath string, 
 		// older branch. Any merge failure degrades to
 		// the legacy keep-local-plus-.conflict path rather than blocking the
 		// pull.
-		localNewer := newestEntryTime(local).After(newestEntryTime(remote))
+		localNewer := sessionTimesOf(local).newerThan(sessionTimesOf(remote))
 		added, merr := MergeSessionPayloads(local, remote, localNewer)
 		if merr != nil {
 			return jsonlConflict, nil
