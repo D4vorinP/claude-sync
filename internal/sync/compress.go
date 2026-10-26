@@ -21,21 +21,27 @@ func isZstd(data []byte) bool {
 // and uploaded.
 func (s *Syncer) encodePayload(relPath string, data []byte) []byte {
 	if IsPortableContentPath(relPath) {
-		data = s.paths.NormalizeContent(relPath, data)
+		data = s.paths.EncodeContent(relPath, data)
 	}
 	return compressPayload(data)
 }
 
-// decodePayload turns a decrypted payload back into local content.
+// decodePayload turns a decrypted payload back into local content. Only storage
+// format 2 writes zstd, and only format 2 escapes "$" in portable content, so a
+// zstd payload decodes with DecodeContent and anything else the format 1 way.
 func (s *Syncer) decodePayload(relPath string, payload []byte) ([]byte, error) {
+	escaped := isZstd(payload)
 	data, err := decompressPayload(payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decompress: %w", err)
 	}
-	if IsPortableContentPath(relPath) {
-		data = s.paths.ResolveContent(relPath, data)
+	if !IsPortableContentPath(relPath) {
+		return data, nil
 	}
-	return data, nil
+	if escaped {
+		return s.paths.DecodeContent(relPath, data), nil
+	}
+	return s.paths.ResolveContent(relPath, data), nil
 }
 
 func compressPayload(data []byte) []byte {

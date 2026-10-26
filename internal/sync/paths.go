@@ -125,17 +125,18 @@ func NewPathMapper(homeDir string, userMap map[string]string) (*PathMapper, erro
 		}
 
 		for kind := pathContentKind(0); kind < numPathContentKinds; kind++ {
+			mp.localIn[kind] = renderLocalPath(localPath, kind)
 			// Only the root's native spelling is matched. Windows also accepts
 			// C:/like/this, but that form shows up mostly inside quoted error
 			// text and tool output, and rewriting a device's own prose is worse
-			// than leaving one uncommon spelling unmapped.
-			root := regexp.QuoteMeta(renderLocalPath(localPath, kind))
+			// than leaving one uncommon spelling unmapped. EncodeContent doubles
+			// every "$" before matching, so a root like \\srv\c$ is matched doubled.
+			root := regexp.QuoteMeta(string(escapeDollars([]byte(mp.localIn[kind]))))
 			tail := `((?:` + separatorPattern(kind, mp.windows) + pathSegment + `)*)`
 			// Boundary-aware: only replace the path when it is not followed by a
 			// name character, so /Users/merv never matches inside /Users/mervynlally.
 			boundary := `([^A-Za-z0-9_.-]|$)`
 			mp.normRe[kind] = regexp.MustCompile(root + tail + boundary)
-			mp.localIn[kind] = renderLocalPath(localPath, kind)
 		}
 
 		mp.resolveRe = regexp.MustCompile(regexp.QuoteMeta(pathToken(name)) + `((?:/` + pathSegment + `)*)`)
@@ -248,10 +249,10 @@ func EncodeClaudePath(p string) string {
 }
 
 // Tokens use the ${NAME} form in both remote keys and file content. This
-// matches the format already written to existing buckets; note that a literal
-// "${HOME}" in transcript content (e.g. a quoted shell snippet) is therefore
-// indistinguishable from a normalized path and resolves to the local home
-// directory on pull.
+// matches the format already written to existing buckets. In a storage format 1
+// object a literal "${HOME}" in transcript content (e.g. a quoted shell snippet)
+// is indistinguishable from a normalized path and resolves to the local home
+// directory on pull; format 2 escapes it, see EncodeContent.
 func pathToken(name string) string { return "${" + name + "}" }
 
 const tokenPrefix = "${"
@@ -313,7 +314,8 @@ func (m *PathMapper) ResolveRelPath(relPath string) (string, bool) {
 // tokens in the content of the file at relPath. Replacement is boundary-aware
 // so one user's home path never matches inside a longer username, and the
 // matched path tail is canonicalized to "/" separators so a Windows device and
-// a POSIX device produce byte-identical remote content.
+// a POSIX device produce byte-identical remote content. It expects every "$" in
+// data already doubled, as EncodeContent does, and matches roots in that form.
 func (m *PathMapper) NormalizeContent(relPath string, data []byte) []byte {
 	if m == nil {
 		return data
@@ -335,7 +337,7 @@ func (m *PathMapper) NormalizeContent(relPath string, data []byte) []byte {
 // which is nearly all of it, is done after a single pass.
 func (mp *pathMapping) normalize(data []byte, kind pathContentKind) []byte {
 	re := mp.normRe[kind]
-	root := []byte(mp.localIn[kind])
+	root := escapeDollars([]byte(mp.localIn[kind]))
 	token := []byte(pathToken(mp.name))
 
 	for {
@@ -397,6 +399,69 @@ func (m *PathMapper) ResolveContent(relPath string, data []byte) []byte {
 		data = append(out, data[prev:]...)
 	}
 	return data
+}
+
+// EncodeContent writes content in its storage format 2 remote form: every "$"
+// doubled, then this device's paths replaced with tokens. A token is then the only
+// single "$" in the content, so a literal "${HOME}" quoted in a transcript is no
+// longer read back as a path.
+func (m *PathMapper) EncodeContent(relPath string, data []byte) []byte {
+	return m.NormalizeContent(relPath, escapeDollars(data))
+}
+
+// DecodeContent reverses EncodeContent. It scans left to right, turning "$$" into
+// "$" and a token into this device's path; the order is what tells "$$${HOME}", a
+// "$" before a path, from "$${HOME}", a literal token. A token this device has no
+// mapping for is left as it is, as ResolveContent does.
+func (m *PathMapper) DecodeContent(relPath string, data []byte) []byte {
+	kind := pathContentKindFor(relPath)
+	matches := escapeOrTokenRe.FindAllSubmatchIndex(data, -1)
+	if len(matches) == 0 {
+		return data
+	}
+
+	out := make([]byte, 0, len(data))
+	prev := 0
+	for _, mi := range matches {
+		out = append(out, data[prev:mi[0]]...)
+		prev = mi[1]
+		if mi[2] < 0 {
+			out = append(out, '$')
+			continue
+		}
+		mp := m.mappingFor(string(data[mi[2]:mi[3]]))
+		if mp == nil {
+			out = append(out, data[mi[0]:mi[1]]...)
+			continue
+		}
+		out = append(out, mp.localIn[kind]...)
+		tail := data[mi[4]:mi[5]]
+		if mp.windows {
+			tail = bytes.ReplaceAll(tail, []byte("/"), []byte(localSeparator(kind, true)))
+		}
+		out = append(out, tail...)
+	}
+	return append(out, data[prev:]...)
+}
+
+// escapeOrTokenRe matches what DecodeContent rewrites: an escaped "$$", or a token
+// with its canonical "/" tail.
+var escapeOrTokenRe = regexp.MustCompile(`\$\$|\$\{([A-Z][A-Z0-9_]*)\}((?:/` + pathSegment + `)*)`)
+
+func (m *PathMapper) mappingFor(name string) *pathMapping {
+	if m == nil {
+		return nil
+	}
+	for i := range m.mappings {
+		if m.mappings[i].name == name {
+			return &m.mappings[i]
+		}
+	}
+	return nil
+}
+
+func escapeDollars(data []byte) []byte {
+	return bytes.ReplaceAll(data, []byte("$"), []byte("$$"))
 }
 
 // canonicalizeTail rewrites the separators of a matched path tail to "/" so the
