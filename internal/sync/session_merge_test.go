@@ -96,7 +96,7 @@ func TestSessionMergeIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestSessionMergeStateWinsByFileTime(t *testing.T) {
+func TestSessionMergeStateGoesToNewerSide(t *testing.T) {
 	local := `{"uuid":"a","type":"user"}` + "\n" + `{"type":"custom-title","customTitle":"old"}` + "\n"
 	remote := `{"uuid":"a","type":"user"}` + "\n" + `{"type":"custom-title","customTitle":"new"}` + "\n"
 

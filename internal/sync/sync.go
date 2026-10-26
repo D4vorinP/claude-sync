@@ -865,18 +865,12 @@ func (s *Syncer) resolveJSONLConflict(ctx context.Context, relativePath string, 
 		// Genuinely diverged: the same session advanced on two machines.
 		// Union-merge by APPENDING what the remote has that local lacks
 		// (MergeSessionPayloads never rewrites local). Whose mutable state
-		// wins is decided by file-level times — the records themselves carry
-		// no timestamp to order by. LastModified is upload time and lags the
-		// remote write by up to one push delay, so near-ties resolve in
-		// remote's favour — a bounded, self-correcting bias (stale state
-		// until the next local state write). Any merge failure degrades to
+		// wins goes by each side's newest entry, not by file times: upload
+		// time lags the edit by up to one push interval, which can resume the
+		// older branch. Any merge failure degrades to
 		// the legacy keep-local-plus-.conflict path rather than blocking the
 		// pull.
-		info, statErr := os.Stat(fullPath)
-		if statErr != nil {
-			return jsonlConflict, statErr
-		}
-		localNewer := info.ModTime().After(remoteObj.LastModified)
+		localNewer := newestEntryTime(local).After(newestEntryTime(remote))
 		added, merr := MergeSessionPayloads(local, remote, localNewer)
 		if merr != nil {
 			return jsonlConflict, nil

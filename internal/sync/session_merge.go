@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"time"
 )
 
 // sessionStateTypes are transcript record types that are MUTABLE session
@@ -20,8 +21,23 @@ var sessionStateTypes = map[string]bool{
 }
 
 type sessionRecord struct {
-	UUID string `json:"uuid"`
-	Type string `json:"type"`
+	UUID      string `json:"uuid"`
+	Type      string `json:"type"`
+	Timestamp string `json:"timestamp"`
+}
+
+func newestEntryTime(payload []byte) time.Time {
+	var newest time.Time
+	_ = forEachLine(bytes.NewReader(payload), func(line []byte) {
+		var r sessionRecord
+		if json.Unmarshal(line, &r) != nil || r.UUID == "" {
+			return
+		}
+		if ts, err := time.Parse(time.RFC3339Nano, r.Timestamp); err == nil && ts.After(newest) {
+			newest = ts
+		}
+	})
+	return newest
 }
 
 // MergeSessionPayloads unions two genuinely diverged session transcripts.
@@ -40,7 +56,7 @@ type sessionRecord struct {
 //     appended directly, only compared as a whole final value. Remote's
 //     final record per type is appended when local never had that type at
 //     all (nothing local to protect, so remote's value is preserved
-//     regardless of file times), or when the remote file is newer and its
+//     regardless of which side is newer), or when the remote side is newer and its
 //     final value differs from local's final value. Everything else —
 //     local is newer and has its own value, or the two finals are
 //     byte-identical — appends nothing, so a stale intermediate remote

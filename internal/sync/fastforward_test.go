@@ -191,6 +191,49 @@ func TestPullMergesDivergedSessionInsteadOfConflict(t *testing.T) {
 	}
 }
 
+func TestPullResumesForkOnSideWithNewestEntry(t *testing.T) {
+	base := `{"uuid":"a","type":"user","timestamp":"2026-10-22T09:00:00.000Z"}` + "\n"
+	earlyPrompt := `{"type":"last-prompt","leafUuid":"b"}`
+	latePrompt := `{"type":"last-prompt","leafUuid":"c"}`
+	early := base + `{"uuid":"b","parentUuid":"a","type":"assistant","timestamp":"2026-10-22T09:50:00.000Z"}` + "\n" + earlyPrompt + "\n"
+	late := base + `{"uuid":"c","parentUuid":"a","type":"assistant","timestamp":"2026-10-22T10:00:00.000Z"}` + "\n" + latePrompt + "\n"
+
+	tests := []struct {
+		name          string
+		local, remote string
+		localMtime    time.Duration
+	}{
+		{"local entries newer, remote uploaded later", late, early, 0},
+		{"remote entries newer, local file written later", early, late, time.Hour},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := setupTestEnv(t)
+			name := "projects/p1/sess.jsonl"
+			pushThenDesync(t, env, name, base, tt.local, tt.remote)
+			if tt.localMtime != 0 {
+				mtime := time.Now().Add(tt.localMtime)
+				if err := os.Chtimes(filepath.Join(env.claudeDir, name), mtime, mtime); err != nil {
+					t.Fatalf("chtimes: %v", err)
+				}
+			}
+
+			if _, err := env.syncer.Pull(context.Background()); err != nil {
+				t.Fatalf("Pull failed: %v", err)
+			}
+			var lastPrompt string
+			for _, line := range strings.Split(readFile(t, env.claudeDir, name), "\n") {
+				if strings.Contains(line, `"type":"last-prompt"`) {
+					lastPrompt = line
+				}
+			}
+			if lastPrompt != latePrompt {
+				t.Errorf("last last-prompt = %s, want %s", lastPrompt, latePrompt)
+			}
+		})
+	}
+}
+
 func TestPullNonJSONLConflictBehaviorUnchanged(t *testing.T) {
 	env := setupTestEnv(t)
 	pushThenDesync(t, env, "CLAUDE.md", "v1", "local-change", "remote-change")
