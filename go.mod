@@ -11,6 +11,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.7
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.96.0
 	github.com/btcsuite/btcd/btcutil v1.1.6
+	github.com/klauspost/compress v1.19.2
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/crypto v0.45.0
 	google.golang.org/api v0.256.0

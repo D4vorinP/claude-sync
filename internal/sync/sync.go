@@ -38,7 +38,8 @@ var conflictArtifactRe = regexp.MustCompile(`\.conflict\.\d{8}-\d{6}$`)
 
 // maxDecompressedSize is the maximum allowed size for decompressed data (500MB).
 // This prevents decompression bomb attacks from consuming excessive memory.
-const maxDecompressedSize = 500 * 1024 * 1024
+// A var so tests can lower it.
+var maxDecompressedSize int64 = 500 * 1024 * 1024
 
 // ManifestKey is the remote storage key for file metadata (mtimes).
 const ManifestKey = "_metadata/manifest.json"
@@ -567,16 +568,7 @@ func (s *Syncer) uploadFile(ctx context.Context, relativePath string) error {
 	// session appends after our read still differs from state and gets pushed.
 	localForm := data
 
-	// Replace machine-specific paths with portable tokens in session content
-	if IsPortableContentPath(relativePath) {
-		data = s.paths.NormalizeContent(relativePath, data)
-	}
-
-	// Compress
-	compressed, err := gzipCompress(data)
-	if err != nil {
-		return fmt.Errorf("failed to compress: %w", err)
-	}
+	compressed := s.encodePayload(relativePath, data)
 
 	// Encrypt
 	encrypted, err := s.encryptor.Encrypt(compressed)
@@ -639,19 +631,7 @@ func (s *Syncer) fetchDecoded(ctx context.Context, relativePath, remoteKey strin
 		return nil, fmt.Errorf("failed to decrypt: %w", err)
 	}
 
-	// Decompress if gzipped (backward-compatible with uncompressed data)
-	if isGzipped(data) {
-		data, err = gzipDecompress(data)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decompress: %w", err)
-		}
-	}
-
-	// Replace portable tokens with this device's paths in session content
-	if IsPortableContentPath(relativePath) {
-		data = s.paths.ResolveContent(relativePath, data)
-	}
-	return data, nil
+	return s.decodePayload(relativePath, data)
 }
 
 // mergeHistoryForPush returns the union of the local history payload and the
@@ -925,10 +905,7 @@ func (s *Syncer) uploadManifest(ctx context.Context) error {
 	}
 
 	// Compress
-	compressed, err := gzipCompress(data)
-	if err != nil {
-		return fmt.Errorf("failed to compress manifest: %w", err)
-	}
+	compressed := compressPayload(data)
 
 	// Encrypt
 	encrypted, err := s.encryptor.Encrypt(compressed)
@@ -963,12 +940,9 @@ func (s *Syncer) downloadManifest(ctx context.Context) (*FileManifest, error) {
 		return nil, fmt.Errorf("failed to decrypt manifest: %w", err)
 	}
 
-	// Decompress if gzipped
-	if isGzipped(data) {
-		data, err = gzipDecompress(data)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decompress manifest: %w", err)
-		}
+	data, err = decompressPayload(data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decompress manifest: %w", err)
 	}
 
 	// Parse
@@ -1273,10 +1247,7 @@ func (s *Syncer) PushMCP(ctx context.Context) (*MCPPushResult, error) {
 		return nil, fmt.Errorf("failed to serialize MCP servers: %w", err)
 	}
 
-	compressed, err := gzipCompress(data)
-	if err != nil {
-		return nil, fmt.Errorf("failed to compress: %w", err)
-	}
+	compressed := compressPayload(data)
 
 	encrypted, err := s.encryptor.Encrypt(compressed)
 	if err != nil {
@@ -1329,11 +1300,9 @@ func (s *Syncer) PullMCP(ctx context.Context) (*MCPPullResult, error) {
 		return nil, fmt.Errorf("failed to decrypt MCP data: %w", err)
 	}
 
-	if isGzipped(decrypted) {
-		decrypted, err = gzipDecompress(decrypted)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decompress MCP data: %w", err)
-		}
+	decrypted, err = decompressPayload(decrypted)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decompress MCP data: %w", err)
 	}
 
 	var remoteServers MCPServers
@@ -1452,21 +1421,6 @@ func (s *Syncer) MCPStatus(ctx context.Context) (*MCPStatusResult, error) {
 // isGzipped checks if data starts with the gzip magic number (0x1f 0x8b).
 func isGzipped(data []byte) bool {
 	return len(data) >= 2 && data[0] == 0x1f && data[1] == 0x8b
-}
-
-func gzipCompress(data []byte) ([]byte, error) {
-	var buf bytes.Buffer
-	w, err := gzip.NewWriterLevel(&buf, gzip.BestSpeed)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := w.Write(data); err != nil {
-		return nil, err
-	}
-	if err := w.Close(); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
 }
 
 func gzipDecompress(data []byte) ([]byte, error) {

@@ -44,6 +44,7 @@ func secondDevice(t *testing.T, env *testEnv) (*Syncer, string) {
 }
 
 func TestPushLeavesUnmarkedBucketUnmarked(t *testing.T) {
+	useStorageFormat(t, 1)
 	env := setupTestEnv(t)
 	ctx := context.Background()
 

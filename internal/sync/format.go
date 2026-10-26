@@ -13,7 +13,7 @@ const FormatKey = "_metadata/format.json"
 
 // storageFormat is the bucket format this build reads and writes. Raise it only when
 // an older build would misread what this one uploads. A var so tests can act as one.
-var storageFormat = 1
+var storageFormat = 2
 
 // FormatTooNewError stops a sync because the bucket holds a format this build would
 // misread.
