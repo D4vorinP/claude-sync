@@ -49,6 +49,15 @@ func (s *Syncer) checkFormat(ctx context.Context, listing []storage.ObjectInfo, 
 	return nil
 }
 
+// requireFormat runs checkFormat for an operation with no listing of its own.
+func (s *Syncer) requireFormat(ctx context.Context, writing bool) error {
+	markers, err := s.storage.List(ctx, FormatKey)
+	if err != nil {
+		return fmt.Errorf("failed to read storage format: %w", err)
+	}
+	return s.checkFormat(ctx, markers, writing)
+}
+
 // bucketFormat reads the marker if listing holds it. A bucket without one predates
 // the marker and is format 1.
 func (s *Syncer) bucketFormat(ctx context.Context, listing []storage.ObjectInfo) (int, error) {

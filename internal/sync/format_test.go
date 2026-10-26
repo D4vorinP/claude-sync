@@ -43,6 +43,43 @@ func secondDevice(t *testing.T, env *testEnv) (*Syncer, string) {
 	}, claudeDir
 }
 
+// The MCP config and a path migration are written outside Push and read outside
+// Pull, so they must pass the same gate.
+func TestFormatGateCoversMCPAndMigrate(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+	older, _ := secondDevice(t, env)
+	for _, s := range []*Syncer{env.syncer, older} {
+		s.cfg.ClaudeJSONOverride = filepath.Join(t.TempDir(), "claude.json")
+		writeFile(t, filepath.Dir(s.cfg.ClaudeJSONOverride), "claude.json",
+			`{"mcpServers":{"test-server":{"command":"node"}}}`)
+	}
+
+	if _, err := env.syncer.PushMCP(ctx); err != nil {
+		t.Fatalf("PushMCP failed: %v", err)
+	}
+	if _, err := env.store.Head(ctx, FormatKey+".age"); err != nil {
+		t.Fatalf("An MCP push on an unmarked bucket must write the format marker: %v", err)
+	}
+
+	useStorageFormat(t, 1)
+	var tooNew *FormatTooNewError
+
+	if _, err := older.PullMCP(ctx); !errors.As(err, &tooNew) {
+		t.Errorf("older device PullMCP: expected FormatTooNewError, got %v", err)
+	}
+	before, _ := env.store.Head(ctx, config.MCPRemoteKey+".age")
+	if _, err := older.PushMCP(ctx); !errors.As(err, &tooNew) {
+		t.Errorf("older device PushMCP: expected FormatTooNewError, got %v", err)
+	}
+	if after, _ := env.store.Head(ctx, config.MCPRemoteKey+".age"); !after.LastModified.Equal(before.LastModified) {
+		t.Error("A halted MCP push must not upload anything")
+	}
+	if _, err := older.MigratePaths(ctx); !errors.As(err, &tooNew) {
+		t.Errorf("older device MigratePaths: expected FormatTooNewError, got %v", err)
+	}
+}
+
 func TestPushLeavesUnmarkedBucketUnmarked(t *testing.T) {
 	useStorageFormat(t, 1)
 	env := setupTestEnv(t)

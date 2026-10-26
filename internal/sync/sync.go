@@ -203,11 +203,7 @@ func (s *Syncer) log(format string, args ...interface{}) {
 func (s *Syncer) Push(ctx context.Context) (*SyncResult, error) {
 	result := &SyncResult{}
 
-	markers, err := s.storage.List(ctx, FormatKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read storage format: %w", err)
-	}
-	if err := s.checkFormat(ctx, markers, true); err != nil {
+	if err := s.requireFormat(ctx, true); err != nil {
 		return nil, err
 	}
 
@@ -1241,6 +1237,10 @@ func (s *Syncer) PushMCP(ctx context.Context) (*MCPPushResult, error) {
 		return result, nil
 	}
 
+	if err := s.requireFormat(ctx, true); err != nil {
+		return nil, err
+	}
+
 	// Serialize, compress, encrypt, upload
 	data, err := json.Marshal(normalized)
 	if err != nil {
@@ -1285,6 +1285,10 @@ func (s *Syncer) PushMCP(ctx context.Context) (*MCPPushResult, error) {
 // PullMCP downloads remote MCP server configs and merges them with local configs.
 func (s *Syncer) PullMCP(ctx context.Context) (*MCPPullResult, error) {
 	result := &MCPPullResult{}
+
+	if err := s.requireFormat(ctx, false); err != nil {
+		return nil, err
+	}
 
 	// Download remote MCP data
 	remoteKey := config.MCPRemoteKey + ".age"

@@ -26,6 +26,10 @@ type MigrateResult struct {
 func (s *Syncer) MigratePaths(ctx context.Context) (*MigrateResult, error) {
 	result := &MigrateResult{}
 
+	if err := s.requireFormat(ctx, true); err != nil {
+		return nil, err
+	}
+
 	remoteObjects, err := s.storage.List(ctx, "projects/")
 	if err != nil {
 		return nil, fmt.Errorf("failed to list remote objects: %w", err)
