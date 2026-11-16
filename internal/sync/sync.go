@@ -77,6 +77,9 @@ type SyncResult struct {
 	Downloaded []string
 	Deleted    []string
 	Conflicts  []string
+	Archived   []string
+	KeptEdits  []string
+	Held       []string
 	Errors     []error
 }
 
@@ -372,6 +375,8 @@ func (s *Syncer) Pull(ctx context.Context) (*SyncResult, error) {
 		return nil, fmt.Errorf("failed to get local files: %w", err)
 	}
 
+	plan := s.planDeletions(remoteFiles, localFiles, len(skipped) > 0)
+
 	// Build list of files to download
 	type downloadTask struct {
 		localPath string
@@ -404,7 +409,7 @@ func (s *Syncer) Pull(ctx context.Context) (*SyncResult, error) {
 		shouldDownload := false
 
 		if !localExists {
-			shouldDownload = true
+			shouldDownload = !plan.deletedHere[localPath]
 		} else if stateFile != nil {
 			// Check if remote is newer than our last known state
 			if remoteObj.LastModified.After(stateFile.Uploaded) {
@@ -508,6 +513,8 @@ func (s *Syncer) Pull(ctx context.Context) (*SyncResult, error) {
 	}
 
 	s.progress(ProgressEvent{Action: "download", Complete: true, Total: total})
+
+	s.applyDeletions(plan, result)
 
 	s.state.LastPull = time.Now()
 	s.state.LastSync = time.Now()

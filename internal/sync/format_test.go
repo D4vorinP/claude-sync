@@ -39,7 +39,7 @@ func secondDevice(t *testing.T, env *testEnv) (*Syncer, string) {
 		state:     state,
 		claudeDir: claudeDir,
 		quiet:     true,
-		cfg:       &config.Config{},
+		cfg:       &config.Config{ArchiveDirOverride: filepath.Join(root, "archive")},
 	}, claudeDir
 }
 

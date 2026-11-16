@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -320,4 +321,171 @@ func TestPlanSyncPathDoesNotMatchSiblingPrefix(t *testing.T) {
 	env.syncer.cfg.SyncPaths = []string{"agents"}
 	env.syncer.state.Files["agentsX/b.json"] = &FileState{Path: "agentsX/b.json", Uploaded: time.Now()}
 	assertPaths(t, "forget", env.plan(t).forget)
+}
+
+func TestPullArchivesFileDeletedElsewhere(t *testing.T) {
+	env := trackedEnv(t, "agents/a.json", "agents/b.json")
+	env.deleteRemote(t, "agents/a.json")
+
+	result, err := env.syncer.Pull(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPaths(t, "archived", result.Archived, "agents/a.json")
+	if env.syncer.state.GetFile("agents/a.json") != nil {
+		t.Error("archived file still in the state")
+	}
+	day := filepath.Join(env.syncer.cfg.ArchiveDirOverride, time.Now().Format("20060102"), "deleted", "agents")
+	if got := readFile(t, day, "a.json"); got != contentOf("agents/a.json") {
+		t.Errorf("archive holds %q", got)
+	}
+}
+
+func TestPullDoesNotRestoreDeletionMadeHere(t *testing.T) {
+	env := trackedEnv(t, "agents/a.json")
+	env.deleteLocal(t, "agents/a.json")
+	ctx := context.Background()
+
+	result, err := env.syncer.Pull(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPaths(t, "downloaded", result.Downloaded)
+	push, err := env.syncer.Push(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPaths(t, "push deleted", push.Deleted, "agents/a.json")
+}
+
+func TestPullRestoresMissingHistory(t *testing.T) {
+	env := trackedEnv(t, "history.jsonl")
+	env.deleteLocal(t, "history.jsonl")
+	if _, err := env.syncer.Pull(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(env.claudeDir, "history.jsonl")); err != nil {
+		t.Errorf("history.jsonl not restored: %v", err)
+	}
+}
+
+func TestPullHoldsMassDeletionUntilAllowed(t *testing.T) {
+	all := agentFiles(12)
+	env := trackedEnv(t, all...)
+	env.deleteRemote(t, all[:11]...)
+	ctx := context.Background()
+	marker := filepath.Join(env.stateDir, HeldMarkerFile)
+
+	result, err := env.syncer.Pull(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Held) != 11 || len(result.Archived) != 0 {
+		t.Fatalf("held %d, archived %d; want 11 and 0", len(result.Held), len(result.Archived))
+	}
+	var held HeldDeletions
+	data, err := os.ReadFile(marker)
+	if err != nil || json.Unmarshal(data, &held) != nil || held.Count != 11 {
+		t.Fatalf("marker = %s (err %v)", data, err)
+	}
+
+	env.syncer.SetAllowDeletes(true)
+	result, err = env.syncer.Pull(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Archived) != 11 {
+		t.Errorf("archived %d after --allow-deletes, want 11", len(result.Archived))
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Errorf("marker must go once nothing is held: %v", err)
+	}
+}
+
+func TestMarkerStaysWhenTheGoneRowsDidNotRun(t *testing.T) {
+	env := setupTestEnv(t)
+	marker := filepath.Join(env.stateDir, HeldMarkerFile)
+	writeFile(t, env.stateDir, HeldMarkerFile, `{"count":11}`)
+
+	env.syncer.applyDeletions(deletionPlan{ran: false}, &SyncResult{})
+	if _, err := os.Stat(marker); err != nil {
+		t.Errorf("a pull that skipped the gone rows must leave the marker: %v", err)
+	}
+}
+
+func TestPullKeepsStateWhenArchiveFails(t *testing.T) {
+	env := trackedEnv(t, "agents/a.json")
+	env.deleteRemote(t, "agents/a.json")
+	blocker := filepath.Join(t.TempDir(), "not-a-folder")
+	writeFile(t, filepath.Dir(blocker), filepath.Base(blocker), "x")
+	env.syncer.cfg.ArchiveDirOverride = blocker
+
+	result, err := env.syncer.Pull(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Errors) == 0 || len(result.Archived) != 0 {
+		t.Errorf("errors %v, archived %v; want an error and nothing archived", result.Errors, result.Archived)
+	}
+	if env.syncer.state.GetFile("agents/a.json") == nil {
+		t.Error("a file that failed to archive must stay in the state")
+	}
+}
+
+func TestPullKeepsFileRenamedByCaseOnly(t *testing.T) {
+	env := trackedEnv(t, "agents/a.json", "agents/b.json")
+	enc, err := env.syncer.encryptor.Encrypt([]byte("renamed"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := env.store.Upload(context.Background(), env.syncer.remoteKey("agents/A.json"), enc); err != nil {
+		t.Fatal(err)
+	}
+	env.deleteRemote(t, "agents/a.json")
+
+	result, err := env.syncer.Pull(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPaths(t, "archived", result.Archived)
+	if _, err := os.Stat(filepath.Join(env.claudeDir, "agents", "a.json")); err != nil {
+		t.Errorf("the file renamed by case only must stay: %v", err)
+	}
+}
+
+func TestApplyDeletionsKeepsFileEditedSincePlan(t *testing.T) {
+	env := trackedEnv(t, "agents/a.json")
+	plan := deletionPlan{ran: true, archive: []string{"agents/a.json"}, deletedHere: map[string]bool{}}
+	writeFile(t, env.claudeDir, "agents/a.json", "edited meanwhile")
+
+	var result SyncResult
+	env.syncer.applyDeletions(plan, &result)
+
+	assertPaths(t, "archived", result.Archived)
+	assertPaths(t, "keptEdits", result.KeptEdits, "agents/a.json")
+	if got := readFile(t, env.claudeDir, "agents/a.json"); got != "edited meanwhile" {
+		t.Errorf("local file = %q", got)
+	}
+	if env.syncer.state.GetFile("agents/a.json") == nil {
+		t.Error("an edited file must stay in the state")
+	}
+}
+
+func TestPullForgetsDeletedOnBothSidesAndKeepsLocalEdits(t *testing.T) {
+	env := trackedEnv(t, "agents/a.json", "agents/c.json", "agents/d.json")
+	env.deleteRemote(t, "agents/c.json", "agents/d.json")
+	env.deleteLocal(t, "agents/c.json")
+	writeFile(t, env.claudeDir, "agents/d.json", "edited here")
+
+	result, err := env.syncer.Pull(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env.syncer.state.GetFile("agents/c.json") != nil {
+		t.Error("a file deleted on both sides must leave the state")
+	}
+	assertPaths(t, "keptEdits", result.KeptEdits, "agents/d.json")
+	if env.syncer.state.GetFile("agents/d.json") == nil {
+		t.Error("an edited file must stay in the state")
+	}
 }

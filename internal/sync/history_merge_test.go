@@ -183,7 +183,7 @@ func newTestMachine(t *testing.T, store storage.Storage) *testEnv {
 			state:     state,
 			claudeDir: claudeDir,
 			quiet:     true,
-			cfg:       &config.Config{Scope: config.ScopeFull},
+			cfg:       &config.Config{Scope: config.ScopeFull, ArchiveDirOverride: filepath.Join(tmpDir, "archive")},
 		},
 		store:     nil,
 		claudeDir: claudeDir,

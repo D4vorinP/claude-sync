@@ -577,7 +577,7 @@ func TestPushThenPullRoundTrip(t *testing.T) {
 		state:     stateA,
 		claudeDir: deviceADir,
 		quiet:     true,
-		cfg:       &config.Config{},
+		cfg:       &config.Config{ArchiveDirOverride: filepath.Join(tmpDir, "deviceA", "archive")},
 	}
 
 	// Device A creates files and pushes
@@ -611,7 +611,7 @@ func TestPushThenPullRoundTrip(t *testing.T) {
 		state:     stateB,
 		claudeDir: deviceBDir,
 		quiet:     true,
-		cfg:       &config.Config{},
+		cfg:       &config.Config{ArchiveDirOverride: filepath.Join(tmpDir, "deviceB", "archive")},
 	}
 
 	// Device B pulls

@@ -33,7 +33,7 @@ func testSyncer(t *testing.T) (*Syncer, *mockStorage, string) {
 	}
 
 	store := newMockStorage()
-	cfg := &config.Config{}
+	cfg := &config.Config{ArchiveDirOverride: filepath.Join(tmpDir, "archive")}
 	syncer := NewSyncerWith(cfg, store, enc, state, claudeDir, true)
 
 	return syncer, store, claudeDir
@@ -165,7 +165,7 @@ func TestSyncerPull_DownloadsNewFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to load state2: %v", err)
 	}
-	syncer2 := NewSyncerWith(&config.Config{}, store, syncer1.encryptor, state2, claudeDir2, true)
+	syncer2 := NewSyncerWith(&config.Config{ArchiveDirOverride: filepath.Join(tmpDir2, "archive")}, store, syncer1.encryptor, state2, claudeDir2, true)
 
 	// Pull from syncer2
 	result, err := syncer2.Pull(ctx)

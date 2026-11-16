@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -76,6 +77,10 @@ func (s *Syncer) deletionRulesApply(relPath string) bool {
 
 func (s *Syncer) planDeletions(remoteFiles map[string]storage.ObjectInfo, localFiles map[string]os.FileInfo, unknownTokens bool) deletionPlan {
 	plan := deletionPlan{deletedHere: map[string]bool{}, ran: !unknownTokens}
+	remoteFold := make(map[string]bool, len(remoteFiles))
+	for k := range remoteFiles {
+		remoteFold[strings.ToLower(k)] = true
+	}
 	tracked := 0
 	for _, relPath := range s.state.Paths() {
 		st := s.state.GetFile(relPath)
@@ -90,7 +95,8 @@ func (s *Syncer) planDeletions(remoteFiles map[string]storage.ObjectInfo, localF
 			if !remoteObj.LastModified.After(st.Uploaded) {
 				plan.deletedHere[relPath] = true
 			}
-		case inRemote || unknownTokens:
+		// A case-only rename elsewhere: on Windows both names are this one file.
+		case inRemote || unknownTokens || remoteFold[strings.ToLower(relPath)]:
 		case !localExists:
 			plan.forget = append(plan.forget, relPath)
 		default:
@@ -107,4 +113,51 @@ func (s *Syncer) planDeletions(remoteFiles map[string]storage.ObjectInfo, localF
 	plan.held = plan.ran && !s.allowDeletes && len(plan.archive) > deleteGuardFloor &&
 		len(plan.archive)*100 > tracked*deleteGuardPercent
 	return plan
+}
+
+const HeldMarkerFile = "deletions-held.json"
+
+type HeldDeletions struct {
+	Time  time.Time `json:"time"`
+	Count int       `json:"count"`
+	Paths []string  `json:"paths"`
+}
+
+func (s *Syncer) heldMarkerPath() string {
+	return filepath.Join(s.state.Dir(), HeldMarkerFile)
+}
+
+func (s *Syncer) applyDeletions(plan deletionPlan, result *SyncResult) {
+	if !plan.ran {
+		return
+	}
+	for _, p := range plan.forget {
+		s.state.RemoveFile(p)
+	}
+	result.KeptEdits = plan.keptEdits
+	if plan.held {
+		result.Held = plan.archive
+		data, _ := json.MarshalIndent(HeldDeletions{Time: time.Now(), Count: len(plan.archive), Paths: plan.archive}, "", "  ")
+		if err := os.WriteFile(s.heldMarkerPath(), data, 0600); err != nil {
+			result.Errors = append(result.Errors, fmt.Errorf("writing the held-deletions marker: %w", err))
+		}
+		return
+	}
+	for _, p := range plan.archive {
+		// The plan hashed before the downloads; an edit made since then must not be archived.
+		hash, err := HashFile(filepath.Join(s.claudeDir, filepath.FromSlash(p)))
+		if st := s.state.GetFile(p); err != nil || st == nil || hash != st.Hash {
+			result.KeptEdits = append(result.KeptEdits, p)
+			continue
+		}
+		if err := s.archiveDeleted(p); err != nil {
+			result.Errors = append(result.Errors, fmt.Errorf("%s: archiving a file deleted elsewhere: %w", p, err))
+			continue
+		}
+		s.state.RemoveFile(p)
+		result.Archived = append(result.Archived, p)
+	}
+	if err := os.Remove(s.heldMarkerPath()); err != nil && !os.IsNotExist(err) {
+		result.Errors = append(result.Errors, fmt.Errorf("removing the held-deletions marker: %w", err))
+	}
 }
