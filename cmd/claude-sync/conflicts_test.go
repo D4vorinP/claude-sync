@@ -64,17 +64,12 @@ func assertNoBackslashKeys(t *testing.T, state *sync.SyncState) {
 	}
 }
 
-func TestKeepLocalLeavesStateForThePush(t *testing.T) {
-	claudeDir, state, conflicts, baseHash, seen := conflictFixture(t)
-
-	if err := batchResolveConflicts(conflicts, "local", claudeDir, state); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := os.Stat(conflicts[0].ConflictPath); !os.IsNotExist(err) {
+func assertKeptLocal(t *testing.T, state *sync.SyncState, c conflictFile, baseHash string, seen time.Time) {
+	t.Helper()
+	if _, err := os.Stat(c.ConflictPath); !os.IsNotExist(err) {
 		t.Errorf("conflict file still exists, stat error: %v", err)
 	}
-	got, err := os.ReadFile(conflicts[0].OriginalPath)
+	got, err := os.ReadFile(c.OriginalPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,21 +89,16 @@ func TestKeepLocalLeavesStateForThePush(t *testing.T) {
 	assertNoBackslashKeys(t, state)
 }
 
-func TestKeepRemoteRecordsTheStorageTime(t *testing.T) {
-	claudeDir, state, conflicts, _, seen := conflictFixture(t)
-
-	if err := batchResolveConflicts(conflicts, "remote", claudeDir, state); err != nil {
-		t.Fatal(err)
-	}
-
-	got, err := os.ReadFile(conflicts[0].OriginalPath)
+func assertKeptRemote(t *testing.T, state *sync.SyncState, c conflictFile, seen time.Time) {
+	t.Helper()
+	got, err := os.ReadFile(c.OriginalPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(got) != "remote\n" {
 		t.Errorf("file = %q, want %q", got, "remote\n")
 	}
-	wantHash, err := sync.HashFile(conflicts[0].OriginalPath)
+	wantHash, err := sync.HashFile(c.OriginalPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,4 +113,44 @@ func TestKeepRemoteRecordsTheStorageTime(t *testing.T) {
 		t.Errorf("Uploaded = %v, want the storage time %v, not this machine's clock", entry.Uploaded, seen)
 	}
 	assertNoBackslashKeys(t, state)
+}
+
+func TestKeepLocalLeavesStateForThePush(t *testing.T) {
+	claudeDir, state, conflicts, baseHash, seen := conflictFixture(t)
+
+	if err := batchResolveConflicts(conflicts, "local", claudeDir, state); err != nil {
+		t.Fatal(err)
+	}
+
+	assertKeptLocal(t, state, conflicts[0], baseHash, seen)
+}
+
+func TestKeepRemoteRecordsTheStorageTime(t *testing.T) {
+	claudeDir, state, conflicts, _, seen := conflictFixture(t)
+
+	if err := batchResolveConflicts(conflicts, "remote", claudeDir, state); err != nil {
+		t.Fatal(err)
+	}
+
+	assertKeptRemote(t, state, conflicts[0], seen)
+}
+
+func TestInteractiveKeepLocalLeavesStateForThePush(t *testing.T) {
+	claudeDir, state, conflicts, baseHash, seen := conflictFixture(t)
+
+	if err := interactiveResolveConflicts(conflicts, claudeDir, state, strings.NewReader("l\n")); err != nil {
+		t.Fatal(err)
+	}
+
+	assertKeptLocal(t, state, conflicts[0], baseHash, seen)
+}
+
+func TestInteractiveKeepRemoteRecordsTheStorageTime(t *testing.T) {
+	claudeDir, state, conflicts, _, seen := conflictFixture(t)
+
+	if err := interactiveResolveConflicts(conflicts, claudeDir, state, strings.NewReader("r\n")); err != nil {
+		t.Fatal(err)
+	}
+
+	assertKeptRemote(t, state, conflicts[0], seen)
 }

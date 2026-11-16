@@ -1314,10 +1314,7 @@ Examples:
 				}
 			}
 
-			if len(result.Held) > 0 {
-				return &sync.DeletionsHeldError{Count: len(result.Held)}
-			}
-			return nil
+			return heldError(result)
 		},
 	}
 
@@ -1328,6 +1325,13 @@ Examples:
 	cmd.Flags().BoolVar(&allowDeletes, "allow-deletes", false, "Archive files deleted on the other machine even when the mass-delete guard holds them")
 
 	return cmd
+}
+
+func heldError(result *sync.SyncResult) error {
+	if len(result.Held) > 0 {
+		return &sync.DeletionsHeldError{Count: len(result.Held)}
+	}
+	return nil
 }
 
 func statusCmd() *cobra.Command {
@@ -1544,7 +1548,7 @@ Examples:
 			}
 
 			// Interactive mode
-			return interactiveResolveConflicts(conflicts, claudeDir, state)
+			return interactiveResolveConflicts(conflicts, claudeDir, state, os.Stdin)
 		},
 	}
 
@@ -1655,8 +1659,8 @@ func batchResolveConflicts(conflicts []conflictFile, keep string, claudeDir stri
 	return nil
 }
 
-func interactiveResolveConflicts(conflicts []conflictFile, claudeDir string, state *sync.SyncState) error {
-	reader := bufio.NewReader(os.Stdin)
+func interactiveResolveConflicts(conflicts []conflictFile, claudeDir string, state *sync.SyncState, in io.Reader) error {
+	reader := bufio.NewReader(in)
 
 	fmt.Println("For each conflict, choose how to resolve:")
 	fmt.Printf("  %s[l]%s Keep local  %s[r]%s Keep remote  %s[d]%s Show diff  %s[s]%s Skip  %s[q]%s Quit\n\n",

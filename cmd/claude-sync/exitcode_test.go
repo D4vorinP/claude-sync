@@ -8,6 +8,15 @@ import (
 	"github.com/tawanorg/claude-sync/internal/sync"
 )
 
+func TestHeldDeletionsExitFour(t *testing.T) {
+	if got := exitCode(heldError(&sync.SyncResult{Held: []string{"a", "b"}})); got != 4 {
+		t.Errorf("exitCode = %d, want 4", got)
+	}
+	if err := heldError(&sync.SyncResult{}); err != nil {
+		t.Errorf("heldError with nothing held = %v, want nil", err)
+	}
+}
+
 func TestExitCodeSeparatesHaltedSync(t *testing.T) {
 	halted := &sync.FormatTooNewError{Bucket: 2, Binary: 1}
 	cases := []struct {
