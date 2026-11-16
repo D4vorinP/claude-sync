@@ -2598,7 +2598,11 @@ func showPullPreview(ctx context.Context, syncer *sync.Syncer) error {
 	fmt.Println()
 	if len(preview.WouldDownload)+len(preview.WouldOverwrite)+len(preview.WouldConflict) > 0 ||
 		(len(preview.WouldArchive) > 0 && !preview.DeletionsHeld) {
-		fmt.Printf("%sRun 'claude-sync pull' to apply these changes.%s\n", colorDim, colorReset)
+		command := "claude-sync pull"
+		if syncer.AllowDeletes() && len(preview.WouldArchive) > 0 {
+			command += " --allow-deletes"
+		}
+		fmt.Printf("%sRun '%s' to apply these changes.%s\n", colorDim, command, colorReset)
 	}
 
 	return nil

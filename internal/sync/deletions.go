@@ -25,8 +25,8 @@ func (s *Syncer) archiveRoot() (string, error) {
 	return filepath.Join(home, ".claude-sync-archive"), nil
 }
 
-// archiveDeleted moves a file the other machine deleted out of ~/.claude. A rename only: a file
-// Claude Code holds open fails here, stays tracked, and the next pull tries again.
+// archiveDeleted moves the file with a rename only: one that cannot be moved stays tracked, and
+// the next pull tries again.
 func (s *Syncer) archiveDeleted(relPath string) error {
 	root, err := s.archiveRoot()
 	if err != nil {
@@ -163,7 +163,7 @@ func (s *Syncer) applyDeletions(plan deletionPlan, result *SyncResult) {
 	result.KeptEdits = plan.keptEdits
 	if plan.held {
 		result.Held = plan.archive
-		data, _ := json.MarshalIndent(HeldDeletions{Time: time.Now(), Count: len(plan.archive), Paths: plan.archive}, "", "  ")
+		data, _ := json.MarshalIndent(HeldDeletions{Time: time.Now().Truncate(time.Second), Count: len(plan.archive), Paths: plan.archive}, "", "  ")
 		if err := os.WriteFile(s.heldMarkerPath(), data, 0600); err != nil {
 			result.Errors = append(result.Errors, fmt.Errorf("writing the held-deletions marker: %w", err))
 		}

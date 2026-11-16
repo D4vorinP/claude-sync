@@ -388,6 +388,9 @@ func TestPullHoldsMassDeletionUntilAllowed(t *testing.T) {
 	if err != nil || json.Unmarshal(data, &held) != nil || held.Count != 11 {
 		t.Fatalf("marker = %s (err %v)", data, err)
 	}
+	if held.Time.Nanosecond() != 0 {
+		t.Errorf("marker time %s has a fractional second", held.Time.Format(time.RFC3339Nano))
+	}
 
 	env.syncer.SetAllowDeletes(true)
 	result, err = env.syncer.Pull(ctx)

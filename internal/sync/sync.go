@@ -165,6 +165,8 @@ func (s *Syncer) SetAllowDeletes(allow bool) {
 	s.allowDeletes = allow
 }
 
+func (s *Syncer) AllowDeletes() bool { return s.allowDeletes }
+
 func (s *Syncer) progress(event ProgressEvent) {
 	if s.onProgress != nil {
 		s.onProgress(event)
