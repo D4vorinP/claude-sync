@@ -115,6 +115,34 @@ func assertKeptRemote(t *testing.T, state *sync.SyncState, c conflictFile, seen 
 	assertNoBackslashKeys(t, state)
 }
 
+func TestFindConflictsOffersOnlyDatedCopies(t *testing.T) {
+	dir := t.TempDir()
+	agents := filepath.Join(dir, "agents")
+	if err := os.MkdirAll(agents, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"a.json", "a.json.conflict.20261116-080000", "notes.conflict.md"} {
+		if err := os.WriteFile(filepath.Join(agents, name), []byte(name), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	conflicts, err := findConflicts(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(conflicts) != 1 {
+		t.Fatalf("findConflicts returned %d entries, want 1: %+v", len(conflicts), conflicts)
+	}
+	if want := filepath.Join(agents, "a.json"); conflicts[0].OriginalPath != want {
+		t.Errorf("OriginalPath = %q, want %q", conflicts[0].OriginalPath, want)
+	}
+	if conflicts[0].Timestamp != "20261116-080000" {
+		t.Errorf("Timestamp = %q, want 20261116-080000", conflicts[0].Timestamp)
+	}
+}
+
 func TestKeepLocalLeavesStateForThePush(t *testing.T) {
 	claudeDir, state, conflicts, baseHash, seen := conflictFixture(t)
 

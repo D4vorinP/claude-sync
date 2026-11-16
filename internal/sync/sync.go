@@ -36,6 +36,8 @@ const defaultWorkers = 10
 // remote deletion of real data.
 var conflictArtifactRe = regexp.MustCompile(`\.conflict\.\d{8}-\d{6}$`)
 
+func IsConflictArtifact(name string) bool { return conflictArtifactRe.MatchString(name) }
+
 // maxDecompressedSize is the maximum allowed size for decompressed data (500MB).
 // This prevents decompression bomb attacks from consuming excessive memory.
 // A var so tests can lower it.
