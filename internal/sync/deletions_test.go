@@ -341,6 +341,34 @@ func TestPullArchivesFileDeletedElsewhere(t *testing.T) {
 	}
 }
 
+func TestPullRemovesFoldersAnArchiveLeavesEmpty(t *testing.T) {
+	env := trackedEnv(t, "skills/gone/SKILL.md", "skills/kept/SKILL.md")
+	env.deleteRemote(t, "skills/gone/SKILL.md")
+	if _, err := env.syncer.Pull(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(env.claudeDir, "skills", "gone")); !os.IsNotExist(err) {
+		t.Errorf("skills/gone must go once its only file is archived: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(env.claudeDir, "skills", "kept", "SKILL.md")); err != nil {
+		t.Errorf("a sibling must stay: %v", err)
+	}
+}
+
+func TestPullKeepsSyncPathRootAndNonEmptyFolders(t *testing.T) {
+	env := trackedEnv(t, "skills/only/SKILL.md", "projects/p/memory/a.md", "projects/p/memory/b.md")
+	env.deleteRemote(t, "skills/only/SKILL.md", "projects/p/memory/a.md")
+	if _, err := env.syncer.Pull(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(env.claudeDir, "skills")); err != nil {
+		t.Errorf("the sync path root skills must stay even when empty: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(env.claudeDir, "projects", "p", "memory", "b.md")); err != nil {
+		t.Errorf("a folder that still holds a file must stay: %v", err)
+	}
+}
+
 func TestPullDoesNotRestoreDeletionMadeHere(t *testing.T) {
 	env := trackedEnv(t, "agents/a.json")
 	env.deleteLocal(t, "agents/a.json")

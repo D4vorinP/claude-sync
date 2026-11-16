@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -44,6 +45,20 @@ func (s *Syncer) archiveDeleted(relPath string) error {
 		target = fmt.Sprintf("%s.%d", dst, n)
 	}
 	return os.Rename(filepath.Join(s.claudeDir, filepath.FromSlash(relPath)), target)
+}
+
+// A skill or project deleted on the other machine must not linger here as an empty folder; the
+// walk stops at the file's sync path, and at the first folder that still holds something.
+func (s *Syncer) pruneEmptyParents(relPath string) {
+	roots := map[string]bool{}
+	for _, p := range s.syncPaths() {
+		roots[filepath.ToSlash(filepath.Clean(p))] = true
+	}
+	for dir := path.Dir(relPath); dir != "." && dir != "/" && !roots[dir]; dir = path.Dir(dir) {
+		if os.Remove(filepath.Join(s.claudeDir, filepath.FromSlash(dir))) != nil {
+			return
+		}
+	}
 }
 
 // A pull holds its deletions when they are more than deleteGuardFloor files and more than
@@ -180,6 +195,7 @@ func (s *Syncer) applyDeletions(plan deletionPlan, result *SyncResult) {
 			result.Errors = append(result.Errors, fmt.Errorf("%s: archiving a file deleted elsewhere: %w", p, err))
 			continue
 		}
+		s.pruneEmptyParents(p)
 		s.state.RemoveFile(p)
 		result.Archived = append(result.Archived, p)
 	}
