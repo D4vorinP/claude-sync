@@ -489,3 +489,108 @@ func TestPullForgetsDeletedOnBothSidesAndKeepsLocalEdits(t *testing.T) {
 		t.Error("an edited file must stay in the state")
 	}
 }
+
+func TestPreviewMatchesPull(t *testing.T) {
+	env := trackedEnv(t, "agents/a.json", "agents/b.json", "agents/c.json")
+	env.deleteRemote(t, "agents/a.json")
+	env.deleteLocal(t, "agents/b.json")
+	ctx := context.Background()
+
+	preview, err := env.syncer.PreviewPull(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pathsOf := func(fs []FilePreview) []string {
+		var out []string
+		for _, f := range fs {
+			out = append(out, f.Path)
+		}
+		return out
+	}
+	assertPaths(t, "would archive", pathsOf(preview.WouldArchive), "agents/a.json")
+	assertPaths(t, "would not restore", pathsOf(preview.WouldNotRestore), "agents/b.json")
+	assertPaths(t, "would download", pathsOf(preview.WouldDownload))
+
+	result, err := env.syncer.Pull(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPaths(t, "archived", result.Archived, "agents/a.json")
+	assertPaths(t, "downloaded", result.Downloaded)
+}
+
+func TestPreviewOnEmptyBucketPlansNoDeletions(t *testing.T) {
+	env := trackedEnv(t, agentFiles(12)...)
+	ctx := context.Background()
+	objs, err := env.store.List(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, o := range objs {
+		if err := env.store.Delete(ctx, o.Key); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	preview, err := env.syncer.PreviewPull(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(preview.WouldArchive) != 0 || len(preview.KeptEdits) != 0 || preview.DeletionsHeld {
+		t.Errorf("an empty bucket plans no deletions, got archive %d, kept edits %d, held %v",
+			len(preview.WouldArchive), len(preview.KeptEdits), preview.DeletionsHeld)
+	}
+	if len(preview.LocalOnlyFiles) != 12 {
+		t.Errorf("local-only files = %d, want 12", len(preview.LocalOnlyFiles))
+	}
+}
+
+func TestPreviewHoldsWithoutTouchingAnything(t *testing.T) {
+	files := agentFiles(12)
+	env := trackedEnv(t, files...)
+	env.deleteRemote(t, files[:11]...)
+	pathsBefore := env.syncer.state.Paths()
+	sort.Strings(pathsBefore)
+
+	preview, err := env.syncer.PreviewPull(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !preview.DeletionsHeld || len(preview.WouldArchive) != 11 {
+		t.Fatalf("held = %v, would archive %d, want true and 11", preview.DeletionsHeld, len(preview.WouldArchive))
+	}
+
+	for _, f := range files[:11] {
+		if _, err := os.Stat(filepath.Join(env.claudeDir, f)); err != nil {
+			t.Errorf("%s must still exist: %v", f, err)
+		}
+	}
+	pathsAfter := env.syncer.state.Paths()
+	sort.Strings(pathsAfter)
+	if fmt.Sprint(pathsAfter) != fmt.Sprint(pathsBefore) {
+		t.Errorf("state paths changed: %v, was %v", pathsAfter, pathsBefore)
+	}
+	if _, err := os.Stat(filepath.Join(env.stateDir, HeldMarkerFile)); !os.IsNotExist(err) {
+		t.Errorf("a preview wrote the held marker: %v", err)
+	}
+	if entries, _ := os.ReadDir(env.syncer.cfg.ArchiveDirOverride); len(entries) != 0 {
+		t.Errorf("a preview archived %d entries", len(entries))
+	}
+}
+
+func TestPreviewShowsKeptEdits(t *testing.T) {
+	env := trackedEnv(t, "agents/a.json", "agents/b.json")
+	env.deleteRemote(t, "agents/a.json")
+	writeFile(t, env.claudeDir, "agents/a.json", "edited here")
+
+	preview, err := env.syncer.PreviewPull(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(preview.KeptEdits) != 1 || preview.KeptEdits[0].Path != "agents/a.json" {
+		t.Errorf("kept edits = %v, want agents/a.json", preview.KeptEdits)
+	}
+	if len(preview.WouldArchive) != 0 {
+		t.Errorf("an edited file must not be archived, got %v", preview.WouldArchive)
+	}
+}

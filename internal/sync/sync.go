@@ -1036,11 +1036,15 @@ type FilePreview struct {
 
 // PullPreview represents what would happen during a pull operation
 type PullPreview struct {
-	WouldDownload  []FilePreview // New remote files that would be downloaded
-	WouldOverwrite []FilePreview // Existing local files that would be replaced
-	WouldKeep      []FilePreview // Local files that would be kept (local newer)
-	WouldConflict  []FilePreview // Files that would create a conflict
-	LocalOnlyFiles []FilePreview // Files that exist only locally
+	WouldDownload   []FilePreview // New remote files that would be downloaded
+	WouldOverwrite  []FilePreview // Existing local files that would be replaced
+	WouldKeep       []FilePreview // Local files that would be kept (local newer)
+	WouldConflict   []FilePreview // Files that would create a conflict
+	LocalOnlyFiles  []FilePreview // Files that exist only locally
+	WouldArchive    []FilePreview // Deleted on the other machine, unchanged here
+	WouldNotRestore []FilePreview // Deleted here; the next push deletes them from the bucket
+	KeptEdits       []FilePreview // Deleted on the other machine, edited here
+	DeletionsHeld   bool          // WouldArchive trips the mass-delete guard
 }
 
 // PreviewPull returns a preview of what would happen during a pull operation
@@ -1055,13 +1059,15 @@ func (s *Syncer) PreviewPull(ctx context.Context) (*PullPreview, error) {
 	}
 
 	// Build remote file map
-	remoteFiles, _ := s.buildRemoteMap(remoteObjects)
+	remoteFiles, skipped := s.buildRemoteMap(remoteObjects)
 
 	// Get current local files
 	localFiles, err := GetLocalFiles(s.claudeDir, s.syncPaths(), s.isExcluded)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get local files: %w", err)
 	}
+
+	plan := s.planDeletions(remoteFiles, localFiles, len(skipped) > 0)
 
 	// Analyze each remote file
 	for localPath, remoteObj := range remoteFiles {
@@ -1080,9 +1086,12 @@ func (s *Syncer) PreviewPull(ctx context.Context) (*PullPreview, error) {
 		}
 
 		if !localExists {
-			// New file from remote
 			fp.RemoteOnly = true
-			preview.WouldDownload = append(preview.WouldDownload, fp)
+			if plan.deletedHere[localPath] {
+				preview.WouldNotRestore = append(preview.WouldNotRestore, fp)
+			} else {
+				preview.WouldDownload = append(preview.WouldDownload, fp)
+			}
 		} else if stateFile != nil {
 			// Check if remote is newer than our last known state
 			if remoteObj.LastModified.After(stateFile.Uploaded) {
@@ -1119,6 +1128,18 @@ func (s *Syncer) PreviewPull(ctx context.Context) (*PullPreview, error) {
 				LocalOnly: true,
 			})
 		}
+	}
+
+	// Pull returns before planning on an empty listing, so the preview shows no deletions then either.
+	if plan.ran && len(remoteObjects) > 0 {
+		for _, p := range plan.archive {
+			info := localFiles[p]
+			preview.WouldArchive = append(preview.WouldArchive, FilePreview{Path: p, LocalTime: info.ModTime(), LocalSize: info.Size(), LocalOnly: true})
+		}
+		for _, p := range plan.keptEdits {
+			preview.KeptEdits = append(preview.KeptEdits, FilePreview{Path: p, LocalOnly: true})
+		}
+		preview.DeletionsHeld = plan.held
 	}
 
 	return preview, nil

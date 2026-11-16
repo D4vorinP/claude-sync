@@ -2473,7 +2473,8 @@ func showPullPreview(ctx context.Context, syncer *sync.Syncer) error {
 	}
 
 	// If nothing would happen
-	total := len(preview.WouldDownload) + len(preview.WouldOverwrite) + len(preview.WouldConflict)
+	total := len(preview.WouldDownload) + len(preview.WouldOverwrite) + len(preview.WouldConflict) +
+		len(preview.WouldArchive) + len(preview.WouldNotRestore) + len(preview.KeptEdits)
 	if total == 0 {
 		fmt.Printf("%s✓%s Already up to date (dry run)\n", colorGreen, colorReset)
 		return nil
@@ -2511,6 +2512,34 @@ func showPullPreview(ctx context.Context, syncer *sync.Syncer) error {
 		fmt.Println()
 	}
 
+	if len(preview.WouldArchive) > 0 {
+		heading := "Would archive (%d files deleted on the other machine):\n"
+		if preview.DeletionsHeld {
+			heading = "Would hold back (%d files deleted on the other machine; 'claude-sync pull --allow-deletes' archives them):\n"
+		}
+		fmt.Printf(heading, len(preview.WouldArchive))
+		for _, f := range preview.WouldArchive {
+			fmt.Printf("  %s-%s %s\n", colorYellow, colorReset, f.Path)
+		}
+		fmt.Println()
+	}
+
+	if len(preview.WouldNotRestore) > 0 {
+		fmt.Printf("Would not restore (%d files deleted here; the next push deletes them from the bucket):\n", len(preview.WouldNotRestore))
+		for _, f := range preview.WouldNotRestore {
+			fmt.Printf("  %sx%s %s\n", colorDim, colorReset, f.Path)
+		}
+		fmt.Println()
+	}
+
+	if len(preview.KeptEdits) > 0 {
+		fmt.Printf("Would keep (%d files edited here but deleted on the other machine; the next push restores them):\n", len(preview.KeptEdits))
+		for _, f := range preview.KeptEdits {
+			fmt.Printf("  %s=%s %s\n", colorYellow, colorReset, f.Path)
+		}
+		fmt.Println()
+	}
+
 	// Show files that would be kept
 	if len(preview.WouldKeep) > 0 {
 		fmt.Printf("Would keep local (%d files newer locally):\n", len(preview.WouldKeep))
@@ -2521,14 +2550,19 @@ func showPullPreview(ctx context.Context, syncer *sync.Syncer) error {
 	}
 
 	// Summary
-	fmt.Printf("%sSummary:%s %d would download, %d would overwrite, %d conflicts, %d unchanged\n",
+	fmt.Printf("%sSummary:%s %d would download, %d would overwrite, %d conflicts, %d would archive, %d not restored, %d unchanged\n",
 		colorBold, colorReset,
 		len(preview.WouldDownload),
 		len(preview.WouldOverwrite),
 		len(preview.WouldConflict),
+		len(preview.WouldArchive),
+		len(preview.WouldNotRestore),
 		len(preview.WouldKeep))
 	fmt.Println()
-	fmt.Printf("%sRun 'claude-sync pull' to apply these changes.%s\n", colorDim, colorReset)
+	if len(preview.WouldDownload)+len(preview.WouldOverwrite)+len(preview.WouldConflict) > 0 ||
+		(len(preview.WouldArchive) > 0 && !preview.DeletionsHeld) {
+		fmt.Printf("%sRun 'claude-sync pull' to apply these changes.%s\n", colorDim, colorReset)
+	}
 
 	return nil
 }
