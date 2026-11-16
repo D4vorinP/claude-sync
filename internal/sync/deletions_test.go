@@ -594,3 +594,32 @@ func TestPreviewShowsKeptEdits(t *testing.T) {
 		t.Errorf("an edited file must not be archived, got %v", preview.WouldArchive)
 	}
 }
+
+func TestPushKeepsFileChangedElsewhereAfterLocalDelete(t *testing.T) {
+	env := trackedEnv(t, "agents/x.json", "agents/y.json")
+	ctx := context.Background()
+	env.deleteLocal(t, "agents/x.json")
+	env.deleteLocal(t, "agents/y.json")
+	time.Sleep(10 * time.Millisecond)
+	enc, err := env.syncer.encryptor.Encrypt([]byte("edited on the other machine"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := env.store.Upload(ctx, env.syncer.remoteKey("agents/x.json"), enc); err != nil {
+		t.Fatal(err)
+	}
+
+	push, err := env.syncer.Push(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPaths(t, "push deleted", push.Deleted, "agents/y.json")
+	assertPaths(t, "changed elsewhere", push.ChangedElsewhere, "agents/x.json")
+
+	if _, err := env.syncer.Pull(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFile(t, env.claudeDir, "agents/x.json"); got != "edited on the other machine" {
+		t.Errorf("x.json = %q, want the other machine's edit back", got)
+	}
+}

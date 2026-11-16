@@ -73,14 +73,15 @@ type Syncer struct {
 }
 
 type SyncResult struct {
-	Uploaded   []string
-	Downloaded []string
-	Deleted    []string
-	Conflicts  []string
-	Archived   []string
-	KeptEdits  []string
-	Held       []string
-	Errors     []error
+	Uploaded         []string
+	Downloaded       []string
+	Deleted          []string
+	ChangedElsewhere []string
+	Conflicts        []string
+	Archived         []string
+	KeptEdits        []string
+	Held             []string
+	Errors           []error
 }
 
 type ProgressEvent struct {
@@ -300,6 +301,15 @@ func (s *Syncer) Push(ctx context.Context) (*SyncResult, error) {
 				continue
 			}
 			remoteDeletes = append(remoteDeletes, change)
+		}
+
+		if len(remoteDeletes) > 0 {
+			kept, changed, err := s.dropDeletesChangedElsewhere(ctx, remoteDeletes)
+			if err != nil {
+				result.Errors = append(result.Errors, fmt.Errorf("checking the bucket before deleting: %w", err))
+			}
+			result.ChangedElsewhere = changed
+			remoteDeletes = kept
 		}
 
 		if len(remoteDeletes) > 0 {
