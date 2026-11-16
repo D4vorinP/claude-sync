@@ -483,7 +483,7 @@ func (s *Syncer) Pull(ctx context.Context) (*SyncResult, error) {
 					}
 				}
 
-				if err := s.downloadFile(ctx, task.localPath, task.remoteObj.Key, mtime); err != nil {
+				if err := s.downloadFile(ctx, task.localPath, task.remoteObj, mtime); err != nil {
 					s.progress(ProgressEvent{
 						Action: "download",
 						Path:   task.localPath,
@@ -613,9 +613,7 @@ func (s *Syncer) listedLastModified(ctx context.Context, remoteKey string) (time
 
 // fetchDecoded downloads a remote object and returns its plaintext in LOCAL
 // form: decrypted, decompressed, and with portable tokens resolved to this
-// device's paths. Factored out of downloadFile so callers can inspect remote
-// content without writing it to disk, and so a byte comparison against the
-// local file compares like with like.
+// device's paths, so it compares byte for byte with the local file.
 func (s *Syncer) fetchDecoded(ctx context.Context, relativePath, remoteKey string) ([]byte, error) {
 	encrypted, err := s.storage.Download(ctx, remoteKey)
 	if err != nil {
@@ -699,45 +697,49 @@ func (s *Syncer) pullMergeHistory(ctx context.Context, relativePath string, remo
 	return true, nil
 }
 
-// downloadFile downloads and decrypts a file from remote storage.
-// If originalMtime is non-nil, the file's modification time will be restored to that value.
-func (s *Syncer) downloadFile(ctx context.Context, relativePath, remoteKey string, originalMtime *time.Time) error {
+// writeDownloaded leaves the state alone: a conflict copy is written this way and must never
+// be recorded as synced.
+func (s *Syncer) writeDownloaded(ctx context.Context, relativePath, remoteKey string, originalMtime *time.Time) (string, error) {
 	data, err := s.fetchDecoded(ctx, relativePath, remoteKey)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	// Guard against path traversal from crafted remote keys
 	fullPath := filepath.Join(s.claudeDir, relativePath)
 	if !strings.HasPrefix(filepath.Clean(fullPath), filepath.Clean(s.claudeDir)+string(filepath.Separator)) {
-		return fmt.Errorf("refusing to write outside %s: %s", s.claudeDir, relativePath)
+		return "", fmt.Errorf("refusing to write outside %s: %s", s.claudeDir, relativePath)
 	}
 
-	// Ensure directory exists
-	dir := filepath.Dir(fullPath)
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return fmt.Errorf("failed to create directory: %w", err)
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0700); err != nil {
+		return "", fmt.Errorf("failed to create directory: %w", err)
 	}
 
 	// Transcripts can contain secrets echoed by tools: keep them user-only
 	if err := os.WriteFile(fullPath, data, 0600); err != nil {
-		return fmt.Errorf("failed to write file: %w", err)
+		return "", fmt.Errorf("failed to write file: %w", err)
 	}
 
-	// Restore original modification time if provided
 	if originalMtime != nil {
 		if err := os.Chtimes(fullPath, *originalMtime, *originalMtime); err != nil {
 			// Log but don't fail - mtime restoration is best-effort
 			s.log("Warning: failed to restore mtime for %s: %v", relativePath, err)
 		}
 	}
+	return fullPath, nil
+}
 
-	// Update state
+// downloadFile records a download with the storage's own timestamp, the value Pull compares
+// against, so a clock running ahead cannot hide a later edit.
+func (s *Syncer) downloadFile(ctx context.Context, relativePath string, remoteObj storage.ObjectInfo, originalMtime *time.Time) error {
+	fullPath, err := s.writeDownloaded(ctx, relativePath, remoteObj.Key, originalMtime)
+	if err != nil {
+		return err
+	}
 	info, _ := os.Stat(fullPath)
 	hash, _ := HashFile(fullPath)
 	s.state.UpdateFile(relativePath, info, hash)
-	s.state.MarkUploaded(relativePath)
-
+	s.state.MarkRemoteSeen(relativePath, remoteObj.LastModified)
 	return nil
 }
 
@@ -872,7 +874,7 @@ func (s *Syncer) handleConflict(ctx context.Context, relativePath string, remote
 
 	// Download remote version with conflict suffix
 	conflictPath := relativePath + ".conflict." + time.Now().Format("20060102-150405")
-	if err := s.downloadFile(ctx, conflictPath, remoteObj.Key, nil); err != nil {
+	if _, err := s.writeDownloaded(ctx, conflictPath, remoteObj.Key, nil); err != nil {
 		return fmt.Errorf("failed to save conflict file: %w", err)
 	}
 
