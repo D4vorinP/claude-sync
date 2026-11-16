@@ -2,6 +2,8 @@ package sync
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -70,5 +72,29 @@ func TestConflictCopyStaysOutOfState(t *testing.T) {
 	}
 	if len(push.Deleted) != 0 {
 		t.Errorf("push deleted %v, want nothing", push.Deleted)
+	}
+}
+
+func TestArchiveKeepsFoldersAndNeverOverwrites(t *testing.T) {
+	env := setupTestEnv(t)
+	rel := "projects/p/memory/MEMORY.md"
+	writeFile(t, env.claudeDir, rel, "one")
+	if err := env.syncer.archiveDeleted(rel); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, env.claudeDir, rel, "two")
+	if err := env.syncer.archiveDeleted(rel); err != nil {
+		t.Fatal(err)
+	}
+
+	day := filepath.Join(env.syncer.cfg.ArchiveDirOverride, time.Now().Format("20060102"), "deleted", "projects", "p", "memory")
+	if got := readFile(t, day, "MEMORY.md"); got != "one" {
+		t.Errorf("first archive = %q", got)
+	}
+	if got := readFile(t, day, "MEMORY.md.1"); got != "two" {
+		t.Errorf("second archive = %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(env.claudeDir, rel)); !os.IsNotExist(err) {
+		t.Errorf("live file still there: %v", err)
 	}
 }

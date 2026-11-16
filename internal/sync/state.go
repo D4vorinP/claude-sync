@@ -177,6 +177,23 @@ func (s *SyncState) RemoveFile(relativePath string) {
 	delete(s.Files, relativePath)
 }
 
+func (s *SyncState) Paths() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	paths := make([]string, 0, len(s.Files))
+	for p := range s.Files {
+		paths = append(paths, p)
+	}
+	return paths
+}
+
+func (s *SyncState) Dir() string {
+	if s.savePath != "" {
+		return filepath.Dir(s.savePath)
+	}
+	return filepath.Dir(config.StateFilePath())
+}
+
 // IsEmpty returns true if no files have been synced yet (first sync)
 func (s *SyncState) IsEmpty() bool {
 	return len(s.Files) == 0 && s.LastSync.IsZero()

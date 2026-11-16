@@ -164,7 +164,7 @@ func setupTestEnv(t *testing.T) *testEnv {
 		state:     state,
 		claudeDir: claudeDir,
 		quiet:     true,
-		cfg:       &config.Config{},
+		cfg:       &config.Config{ArchiveDirOverride: filepath.Join(tmpDir, "archive")},
 	}
 
 	return &testEnv{

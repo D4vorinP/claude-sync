@@ -78,6 +78,9 @@ type Config struct {
 
 	// ClaudeJSONOverride allows overriding the ~/.claude.json path (for testing)
 	ClaudeJSONOverride string `yaml:"-"`
+
+	// ArchiveDirOverride allows overriding the ~/.claude-sync-archive path (for testing)
+	ArchiveDirOverride string `yaml:"-"`
 }
 
 // SyncPaths defines which paths under ~/.claude to sync in the default "full" scope.
