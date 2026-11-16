@@ -83,12 +83,16 @@ func main() {
 	}
 }
 
-// exitCode gives a halted sync its own code, so a scheduled run can tell "upgrade
-// this machine" apart from an ordinary failure.
+// exitCode gives a halted sync and held deletions their own codes, so a scheduled run can tell
+// them apart from an ordinary failure.
 func exitCode(err error) int {
 	var tooNew *sync.FormatTooNewError
 	if errors.As(err, &tooNew) {
 		return 3
+	}
+	var held *sync.DeletionsHeldError
+	if errors.As(err, &held) {
+		return 4
 	}
 	return 1
 }
@@ -1041,6 +1045,7 @@ func pushCmd() *cobra.Command {
 		Short: "Upload local changes to cloud storage",
 		Long:  `Encrypt and upload changed files from ~/.claude to cloud storage.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
 			cfg, err := config.Load()
 			if err != nil {
 				return err
@@ -1143,7 +1148,7 @@ func pushCmd() *cobra.Command {
 }
 
 func pullCmd() *cobra.Command {
-	var dryRun, force, includeMCP, rebuildHistory bool
+	var dryRun, force, includeMCP, rebuildHistory, allowDeletes bool
 
 	cmd := &cobra.Command{
 		Use:   "pull",
@@ -1158,6 +1163,7 @@ Examples:
   claude-sync pull --dry-run    # Preview what would be changed
   claude-sync pull --force      # Skip confirmation prompts`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
 			cfg, err := config.Load()
 			if err != nil {
 				return err
@@ -1167,6 +1173,7 @@ Examples:
 			if err != nil {
 				return err
 			}
+			syncer.SetAllowDeletes(allowDeletes)
 
 			ctx := context.Background()
 
@@ -1231,13 +1238,16 @@ Examples:
 			if !quiet {
 				fmt.Println() // Clear the progress line
 
-				if len(result.Downloaded) == 0 && len(result.Conflicts) == 0 && len(result.Errors) == 0 {
+				if len(result.Downloaded) == 0 && len(result.Conflicts) == 0 && len(result.Errors) == 0 && len(result.Archived) == 0 && len(result.KeptEdits) == 0 && len(result.Held) == 0 {
 					// Already printed "Already up to date"
 				} else {
 					// Summary
 					var parts []string
 					if len(result.Downloaded) > 0 {
 						parts = append(parts, fmt.Sprintf("%s%d downloaded%s", colorGreen, len(result.Downloaded), colorReset))
+					}
+					if len(result.Archived) > 0 {
+						parts = append(parts, fmt.Sprintf("%s%d archived%s", colorYellow, len(result.Archived), colorReset))
 					}
 					if len(result.Conflicts) > 0 {
 						parts = append(parts, fmt.Sprintf("%s%d conflicts%s", colorYellow, len(result.Conflicts), colorReset))
@@ -1256,6 +1266,19 @@ Examples:
 						}
 						fmt.Printf("\n%sLocal versions kept. Remote saved as .conflict files.%s\n", colorDim, colorReset)
 						fmt.Printf("%sRun '%sclaude-sync conflicts%s%s' to review and resolve.%s\n", colorDim, colorCyan, colorReset, colorDim, colorReset)
+					}
+
+					if len(result.Archived) > 0 {
+						fmt.Printf("\n%sArchived to ~/.claude-sync-archive (deleted on the other machine):%s\n", colorDim, colorReset)
+						for _, p := range result.Archived {
+							fmt.Printf("  - %s\n", p)
+						}
+					}
+					if len(result.KeptEdits) > 0 {
+						fmt.Printf("\n%sEdited here, deleted on the other machine (the next push restores them):%s\n", colorYellow, colorReset)
+						for _, p := range result.KeptEdits {
+							fmt.Printf("  = %s\n", p)
+						}
 					}
 
 					if len(result.Errors) > 0 {
@@ -1281,6 +1304,9 @@ Examples:
 				}
 			}
 
+			if len(result.Held) > 0 {
+				return &sync.DeletionsHeldError{Count: len(result.Held)}
+			}
 			return nil
 		},
 	}
@@ -1289,6 +1315,7 @@ Examples:
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing files without confirmation")
 	cmd.Flags().BoolVar(&includeMCP, "include-mcp", false, "Also sync MCP server configs from ~/.claude.json")
 	cmd.Flags().BoolVar(&rebuildHistory, "rebuild-history", false, "Rebuild ~/.claude/history.jsonl from session files after pulling")
+	cmd.Flags().BoolVar(&allowDeletes, "allow-deletes", false, "Archive files deleted on the other machine even when the mass-delete guard holds them")
 
 	return cmd
 }

@@ -161,3 +161,9 @@ func (s *Syncer) applyDeletions(plan deletionPlan, result *SyncResult) {
 		result.Errors = append(result.Errors, fmt.Errorf("removing the held-deletions marker: %w", err))
 	}
 }
+
+type DeletionsHeldError struct{ Count int }
+
+func (e *DeletionsHeldError) Error() string {
+	return fmt.Sprintf("deletions held: %d files deleted on the other machine; check with 'claude-sync pull --dry-run', then run 'claude-sync pull --allow-deletes'", e.Count)
+}

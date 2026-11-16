@@ -17,6 +17,8 @@ func TestExitCodeSeparatesHaltedSync(t *testing.T) {
 	}{
 		{"halted", halted, 3},
 		{"halted, wrapped", fmt.Errorf("pull: %w", halted), 3},
+		{"deletions held", &sync.DeletionsHeldError{Count: 11}, 4},
+		{"deletions held, wrapped", fmt.Errorf("pull: %w", &sync.DeletionsHeldError{Count: 11}), 4},
 		{"other failure", errors.New("network down"), 1},
 	}
 	for _, c := range cases {
