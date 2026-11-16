@@ -61,14 +61,15 @@ type FileMetadata struct {
 }
 
 type Syncer struct {
-	storage    storage.Storage
-	encryptor  *crypto.Encryptor
-	state      *SyncState
-	claudeDir  string
-	quiet      bool
-	onProgress ProgressFunc
-	cfg        *config.Config
-	paths      *PathMapper
+	storage      storage.Storage
+	encryptor    *crypto.Encryptor
+	state        *SyncState
+	claudeDir    string
+	quiet        bool
+	onProgress   ProgressFunc
+	cfg          *config.Config
+	paths        *PathMapper
+	allowDeletes bool
 }
 
 type SyncResult struct {
@@ -154,6 +155,10 @@ func NewSyncerWith(cfg *config.Config, store storage.Storage, enc *crypto.Encryp
 
 func (s *Syncer) SetProgressFunc(fn ProgressFunc) {
 	s.onProgress = fn
+}
+
+func (s *Syncer) SetAllowDeletes(allow bool) {
+	s.allowDeletes = allow
 }
 
 func (s *Syncer) progress(event ProgressEvent) {
