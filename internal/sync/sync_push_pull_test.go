@@ -811,3 +811,84 @@ func TestPushKeepsRemoteMCPConfig(t *testing.T) {
 		t.Errorf("Expected unchanged MCP config not to be re-uploaded, pushed %d servers", mcp.ServersPushed)
 	}
 }
+
+func (env *testEnv) uploadFromOtherMachine(t *testing.T, rel, content string) {
+	t.Helper()
+	time.Sleep(10 * time.Millisecond)
+	encrypted, err := env.syncer.encryptor.Encrypt([]byte(content))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := env.store.Upload(context.Background(), env.syncer.remoteKey(rel), encrypted); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (env *testEnv) remoteContent(t *testing.T, rel string) string {
+	t.Helper()
+	data, err := env.syncer.fetchDecoded(context.Background(), rel, env.syncer.remoteKey(rel))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+func TestPushHoldsBackFileChangedOnBothMachines(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+	writeFile(t, env.claudeDir, "settings.json", `{"v":"base"}`)
+	writeFile(t, env.claudeDir, "CLAUDE.md", "# base")
+	if _, err := env.syncer.Push(ctx); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, env.claudeDir, "settings.json", `{"v":"here"}`)
+	writeFile(t, env.claudeDir, "CLAUDE.md", "# here")
+	env.uploadFromOtherMachine(t, "settings.json", `{"v":"there"}`)
+
+	push, err := env.syncer.Push(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPaths(t, "push uploaded", push.Uploaded, "CLAUDE.md")
+	assertPaths(t, "changed on both", push.ChangedOnBoth, "settings.json")
+	if got := env.remoteContent(t, "settings.json"); got != `{"v":"there"}` {
+		t.Errorf("the bucket's settings.json = %q, want the other machine's edit kept", got)
+	}
+
+	pull, err := env.syncer.Pull(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPaths(t, "pull conflicts", pull.Conflicts, "settings.json")
+	if got := readFile(t, env.claudeDir, "settings.json"); got != `{"v":"here"}` {
+		t.Errorf("settings.json = %q, want this machine's edit kept", got)
+	}
+
+	push, err = env.syncer.Push(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPaths(t, "push after the pull", push.Uploaded, "settings.json")
+}
+
+func TestPushLeavesTranscriptsAndHistoryToTheirOwnGuards(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+	transcript := "projects/p/s.jsonl"
+	writeFile(t, env.claudeDir, transcript, `{"uuid":"a"}`+"\n")
+	writeFile(t, env.claudeDir, HistoryFile, historyLine("one", 1, "s")+"\n")
+	if _, err := env.syncer.Push(ctx); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, env.claudeDir, transcript, `{"uuid":"a"}`+"\n"+`{"uuid":"b"}`+"\n")
+	writeFile(t, env.claudeDir, HistoryFile, historyLine("one", 1, "s")+"\n"+historyLine("two", 2, "s")+"\n")
+	env.uploadFromOtherMachine(t, transcript, `{"uuid":"a"}`+"\n"+`{"uuid":"c"}`+"\n")
+	env.uploadFromOtherMachine(t, HistoryFile, historyLine("one", 1, "s")+"\n"+historyLine("three", 3, "s")+"\n")
+
+	push, err := env.syncer.Push(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPaths(t, "push uploaded", push.Uploaded, HistoryFile, transcript)
+	assertPaths(t, "changed on both", push.ChangedOnBoth)
+}

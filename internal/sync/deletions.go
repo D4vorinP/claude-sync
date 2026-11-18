@@ -1,7 +1,6 @@
 package sync
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -133,27 +132,18 @@ func (s *Syncer) planDeletions(remoteFiles map[string]storage.ObjectInfo, localF
 
 // An edit beats a deletion: a file the other machine changed after this machine's last sync stays
 // in the bucket, and only its state entry goes, so the next pull downloads it again.
-func (s *Syncer) dropDeletesChangedElsewhere(ctx context.Context, deletes []FileChange) ([]FileChange, []string, error) {
-	objs, err := s.storage.List(ctx, "")
-	if err != nil {
-		return nil, nil, err
-	}
-	lastModified := make(map[string]time.Time, len(objs))
-	for _, o := range objs {
-		lastModified[o.Key] = o.LastModified
-	}
+func (s *Syncer) dropDeletesChangedElsewhere(deletes []FileChange, remoteTimes map[string]time.Time) ([]FileChange, []string) {
 	var keep []FileChange
 	var changedElsewhere []string
 	for _, d := range deletes {
-		st := s.state.GetFile(d.Path)
-		if lm, ok := lastModified[s.remoteKey(d.Path)]; ok && st != nil && lm.After(st.Uploaded) {
+		if s.changedElsewhere(d.Path, remoteTimes) {
 			s.state.RemoveFile(d.Path)
 			changedElsewhere = append(changedElsewhere, d.Path)
 			continue
 		}
 		keep = append(keep, d)
 	}
-	return keep, changedElsewhere, nil
+	return keep, changedElsewhere
 }
 
 const HeldMarkerFile = "deletions-held.json"

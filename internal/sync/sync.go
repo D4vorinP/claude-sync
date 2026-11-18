@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -79,6 +80,7 @@ type SyncResult struct {
 	Downloaded       []string
 	Deleted          []string
 	ChangedElsewhere []string
+	ChangedOnBoth    []string
 	Conflicts        []string
 	Archived         []string
 	KeptEdits        []string
@@ -243,6 +245,28 @@ func (s *Syncer) Push(ctx context.Context) (*SyncResult, error) {
 		}
 	}
 
+	// The bucket's history.jsonl is a union that only ever grows — a
+	// locally deleted history file must not delete every other machine's
+	// entries with it. Drop the state entry instead; the next pull
+	// restores the file locally.
+	var remoteDeletes []FileChange
+	for _, change := range deletes {
+		if change.Path == HistoryFile {
+			s.state.RemoveFile(change.Path)
+			continue
+		}
+		remoteDeletes = append(remoteDeletes, change)
+	}
+
+	if len(remoteDeletes) > 0 || slices.ContainsFunc(uploads, s.uploadGuarded) {
+		remoteTimes, err := s.remoteTimes(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("checking the bucket before pushing: %w", err)
+		}
+		uploads, result.ChangedOnBoth = s.holdUploadsChangedElsewhere(uploads, remoteTimes)
+		remoteDeletes, result.ChangedElsewhere = s.dropDeletesChangedElsewhere(remoteDeletes, remoteTimes)
+	}
+
 	total := len(changes)
 	var mu sync.Mutex
 	var completed atomic.Int32
@@ -293,41 +317,17 @@ func (s *Syncer) Push(ctx context.Context) (*SyncResult, error) {
 	}
 
 	// Process deletes (use batch delete if available, otherwise concurrent)
-	if len(deletes) > 0 {
-		// The bucket's history.jsonl is a union that only ever grows — a
-		// locally deleted history file must not delete every other machine's
-		// entries with it. Drop the state entry instead; the next pull
-		// restores the file locally.
-		var remoteDeletes []FileChange
-		for _, change := range deletes {
-			if change.Path == HistoryFile {
+	if len(remoteDeletes) > 0 {
+		deleteKeys := make([]string, len(remoteDeletes))
+		for i, change := range remoteDeletes {
+			deleteKeys[i] = s.remoteKey(change.Path)
+		}
+		if err := s.storage.DeleteBatch(ctx, deleteKeys); err != nil {
+			result.Errors = append(result.Errors, fmt.Errorf("batch delete: %w", err))
+		} else {
+			for _, change := range remoteDeletes {
 				s.state.RemoveFile(change.Path)
-				continue
-			}
-			remoteDeletes = append(remoteDeletes, change)
-		}
-
-		if len(remoteDeletes) > 0 {
-			kept, changed, err := s.dropDeletesChangedElsewhere(ctx, remoteDeletes)
-			if err != nil {
-				result.Errors = append(result.Errors, fmt.Errorf("checking the bucket before deleting: %w", err))
-			}
-			result.ChangedElsewhere = changed
-			remoteDeletes = kept
-		}
-
-		if len(remoteDeletes) > 0 {
-			deleteKeys := make([]string, len(remoteDeletes))
-			for i, change := range remoteDeletes {
-				deleteKeys[i] = s.remoteKey(change.Path)
-			}
-			if err := s.storage.DeleteBatch(ctx, deleteKeys); err != nil {
-				result.Errors = append(result.Errors, fmt.Errorf("batch delete: %w", err))
-			} else {
-				for _, change := range remoteDeletes {
-					s.state.RemoveFile(change.Path)
-					result.Deleted = append(result.Deleted, change.Path)
-				}
+				result.Deleted = append(result.Deleted, change.Path)
 			}
 		}
 	}
@@ -349,6 +349,45 @@ func (s *Syncer) Push(ctx context.Context) (*SyncResult, error) {
 	}
 
 	return result, nil
+}
+
+func (s *Syncer) remoteTimes(ctx context.Context) (map[string]time.Time, error) {
+	objs, err := s.storage.List(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	times := make(map[string]time.Time, len(objs))
+	for _, o := range objs {
+		times[o.Key] = o.LastModified
+	}
+	return times, nil
+}
+
+func (s *Syncer) changedElsewhere(relPath string, remoteTimes map[string]time.Time) bool {
+	st := s.state.GetFile(relPath)
+	lm, ok := remoteTimes[s.remoteKey(relPath)]
+	return ok && st != nil && lm.After(st.Uploaded)
+}
+
+// Session transcripts and history.jsonl have guards of their own: a shrunk transcript is not
+// uploaded, a forked one is merged on pull, and history is merged on push and pull alike.
+func (s *Syncer) uploadGuarded(change FileChange) bool {
+	return !isSessionJSONL(change.Path) && change.Path != HistoryFile && s.state.GetFile(change.Path) != nil
+}
+
+// Holding an upload back leaves its state entry as it is, so the next pull finds both sides changed:
+// it keeps this machine's copy and saves the other machine's beside it as a .conflict file.
+func (s *Syncer) holdUploadsChangedElsewhere(uploads []FileChange, remoteTimes map[string]time.Time) ([]FileChange, []string) {
+	var keep []FileChange
+	var held []string
+	for _, u := range uploads {
+		if s.uploadGuarded(u) && s.changedElsewhere(u.Path, remoteTimes) {
+			held = append(held, u.Path)
+			continue
+		}
+		keep = append(keep, u)
+	}
+	return keep, held
 }
 
 func (s *Syncer) Pull(ctx context.Context) (*SyncResult, error) {

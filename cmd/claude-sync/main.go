@@ -1105,7 +1105,7 @@ func pushCmd() *cobra.Command {
 			if !quiet {
 				fmt.Println() // Clear the progress line
 
-				if len(result.Uploaded) == 0 && len(result.Deleted) == 0 && len(result.ChangedElsewhere) == 0 && len(result.Errors) == 0 {
+				if len(result.Uploaded) == 0 && len(result.Deleted) == 0 && len(result.ChangedElsewhere) == 0 && len(result.ChangedOnBoth) == 0 && len(result.Errors) == 0 {
 					// Already printed "No changes"
 				} else {
 					// Summary
@@ -1119,6 +1119,9 @@ func pushCmd() *cobra.Command {
 					if len(result.ChangedElsewhere) > 0 {
 						parts = append(parts, fmt.Sprintf("%s%d kept (changed on the other machine)%s", colorYellow, len(result.ChangedElsewhere), colorReset))
 					}
+					if len(result.ChangedOnBoth) > 0 {
+						parts = append(parts, fmt.Sprintf("%s%d held back (changed on both machines)%s", colorYellow, len(result.ChangedOnBoth), colorReset))
+					}
 					if len(result.Errors) > 0 {
 						parts = append(parts, fmt.Sprintf("%s%d failed%s", colorYellow, len(result.Errors), colorReset))
 					}
@@ -1130,6 +1133,13 @@ func pushCmd() *cobra.Command {
 						fmt.Printf("\n%sDeleted here but changed on the other machine (the next pull brings them back):%s\n", colorYellow, colorReset)
 						for _, p := range result.ChangedElsewhere {
 							fmt.Printf("  + %s\n", p)
+						}
+					}
+
+					if len(result.ChangedOnBoth) > 0 {
+						fmt.Printf("\n%sChanged here and on the other machine, not uploaded (the next pull keeps yours and saves theirs as .conflict):%s\n", colorYellow, colorReset)
+						for _, p := range result.ChangedOnBoth {
+							fmt.Printf("  ! %s\n", p)
 						}
 					}
 
