@@ -79,6 +79,7 @@ type SyncResult struct {
 	Uploaded         []string
 	Downloaded       []string
 	Deleted          []string
+	Updated          []string // The part of Uploaded or Downloaded that replaced an earlier version.
 	ChangedElsewhere []string
 	ChangedOnBoth    []string
 	Conflicts        []string
@@ -86,6 +87,33 @@ type SyncResult struct {
 	KeptEdits        []string
 	Held             []string
 	Errors           []error
+}
+
+// ChangeLines names every file in transferred (Uploaded for a push, Downloaded for a pull) and every
+// deleted one as "added|updated|deleted <path>", grouped by verb and sorted by path.
+func (r *SyncResult) ChangeLines(transferred []string) []string {
+	updated := make(map[string]bool, len(r.Updated))
+	for _, p := range r.Updated {
+		updated[p] = true
+	}
+	var added, replaced []string
+	for _, p := range transferred {
+		if updated[p] {
+			replaced = append(replaced, p)
+		} else {
+			added = append(added, p)
+		}
+	}
+	var lines []string
+	for _, group := range []struct {
+		verb  string
+		paths []string
+	}{{"added  ", added}, {"updated", replaced}, {"deleted", r.Deleted}} {
+		for _, p := range slices.Sorted(slices.Values(group.paths)) {
+			lines = append(lines, group.verb+" "+p)
+		}
+	}
+	return lines
 }
 
 type ProgressEvent struct {
@@ -310,6 +338,9 @@ func (s *Syncer) Push(ctx context.Context) (*SyncResult, error) {
 				}
 				mu.Lock()
 				result.Uploaded = append(result.Uploaded, change.Path)
+				if change.Action == "modify" {
+					result.Updated = append(result.Updated, change.Path)
+				}
 				mu.Unlock()
 			}(change)
 		}
@@ -434,6 +465,7 @@ func (s *Syncer) Pull(ctx context.Context) (*SyncResult, error) {
 	type downloadTask struct {
 		localPath string
 		remoteObj storage.ObjectInfo
+		replaces  bool
 	}
 	var toDownload []downloadTask
 
@@ -453,6 +485,7 @@ func (s *Syncer) Pull(ctx context.Context) (*SyncResult, error) {
 					result.Errors = append(result.Errors, fmt.Errorf("%s: %w", localPath, err))
 				} else if changed {
 					result.Downloaded = append(result.Downloaded, localPath)
+					result.Updated = append(result.Updated, localPath)
 					s.progress(ProgressEvent{Action: "download", Path: localPath, Size: remoteObj.Size})
 				}
 			}
@@ -485,6 +518,7 @@ func (s *Syncer) Pull(ctx context.Context) (*SyncResult, error) {
 							continue
 						case jsonlFastForwarded, jsonlMerged:
 							result.Downloaded = append(result.Downloaded, localPath)
+							result.Updated = append(result.Updated, localPath)
 							s.progress(ProgressEvent{Action: "download", Path: localPath, Size: remoteObj.Size})
 							continue
 						}
@@ -510,7 +544,7 @@ func (s *Syncer) Pull(ctx context.Context) (*SyncResult, error) {
 		}
 
 		if shouldDownload {
-			toDownload = append(toDownload, downloadTask{localPath, remoteObj})
+			toDownload = append(toDownload, downloadTask{localPath, remoteObj, localExists})
 		}
 	}
 
@@ -559,6 +593,9 @@ func (s *Syncer) Pull(ctx context.Context) (*SyncResult, error) {
 				}
 				mu.Lock()
 				result.Downloaded = append(result.Downloaded, task.localPath)
+				if task.replaces {
+					result.Updated = append(result.Updated, task.localPath)
+				}
 				mu.Unlock()
 			}(task)
 		}

@@ -1037,6 +1037,16 @@ func reportQuietErrors(result *sync.SyncResult) {
 	}
 }
 
+func printChangeLines(w io.Writer, heading string, lines []string) {
+	if len(lines) == 0 {
+		return
+	}
+	fmt.Fprintf(w, "\n%s%s%s\n", colorDim, heading, colorReset)
+	for _, line := range lines {
+		fmt.Fprintf(w, "  %s\n", line)
+	}
+}
+
 func pushCmd() *cobra.Command {
 	var includeMCP bool
 
@@ -1128,6 +1138,8 @@ func pushCmd() *cobra.Command {
 					if len(parts) > 0 {
 						fmt.Printf("%s✓%s Push complete: %s\n", colorGreen, colorReset, strings.Join(parts, ", "))
 					}
+
+					printChangeLines(os.Stdout, "Files pushed to R2:", result.ChangeLines(result.Uploaded))
 
 					if len(result.ChangedElsewhere) > 0 {
 						fmt.Printf("\n%sDeleted here but changed on the other machine (the next pull brings them back):%s\n", colorYellow, colorReset)
@@ -1278,6 +1290,8 @@ Examples:
 					if len(parts) > 0 {
 						fmt.Printf("%s✓%s Pull complete: %s\n", colorGreen, colorReset, strings.Join(parts, ", "))
 					}
+
+					printChangeLines(os.Stdout, "Files pulled from R2:", result.ChangeLines(result.Downloaded))
 
 					if len(result.Conflicts) > 0 {
 						fmt.Printf("\n%sConflicts (both local and remote changed):%s\n", colorYellow, colorReset)
@@ -2687,6 +2701,8 @@ func executePull(ctx context.Context, syncer *sync.Syncer) error {
 			if len(parts) > 0 {
 				fmt.Printf("%s✓%s Pull complete: %s\n", colorGreen, colorReset, strings.Join(parts, ", "))
 			}
+
+			printChangeLines(os.Stdout, "Files pulled from R2:", result.ChangeLines(result.Downloaded))
 
 			if len(result.Conflicts) > 0 {
 				fmt.Printf("\n%sConflicts (both local and remote changed):%s\n", colorYellow, colorReset)
