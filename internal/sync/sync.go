@@ -1442,13 +1442,14 @@ func (s *Syncer) PullMCP(ctx context.Context) (*MCPPullResult, error) {
 		return nil, fmt.Errorf("failed to write MCP servers: %w", err)
 	}
 
-	// Update baseline to the merged normalized state
-	if err := s.state.SetMCPBaseline(mergeResult.Merged); err != nil {
+	// Record what the bucket holds, not the merge: a server kept only here must still look unpushed,
+	// or the next push skips it and the pull after that takes it for a deletion on the other machine.
+	if err := s.state.SetMCPBaseline(remoteServers); err != nil {
 		return nil, fmt.Errorf("failed to save MCP baseline: %w", err)
 	}
 
 	// Update file state
-	newHash, _ := HashMCPServers(mergeResult.Merged)
+	newHash, _ := HashMCPServers(remoteServers)
 	s.state.mu.Lock()
 	s.state.Files[config.MCPRemoteKey] = &FileState{
 		Path:     config.MCPRemoteKey,

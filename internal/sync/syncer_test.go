@@ -404,6 +404,47 @@ func TestSyncerPullMCP_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestSyncerPullMCP_KeepsServerAddedHereUntilPushed(t *testing.T) {
+	syncer, _, _ := testSyncer(t)
+	ctx := context.Background()
+	claudeJSON := filepath.Join(t.TempDir(), "claude.json")
+	syncer.cfg.ClaudeJSONOverride = claudeJSON
+	writeServers := func(content string) {
+		t.Helper()
+		if err := os.WriteFile(claudeJSON, []byte(content), 0644); err != nil {
+			t.Fatalf("Failed to write claude.json: %v", err)
+		}
+	}
+
+	writeServers(`{"mcpServers":{"shared":{"command":"node","args":["shared.js"]}}}`)
+	if _, err := syncer.PushMCP(ctx); err != nil {
+		t.Fatalf("PushMCP failed: %v", err)
+	}
+
+	writeServers(`{"mcpServers":{"shared":{"command":"node","args":["shared.js"]},"added":{"command":"node","args":["added.js"]}}}`)
+	for pull := 1; pull <= 2; pull++ {
+		if _, err := syncer.PullMCP(ctx); err != nil {
+			t.Fatalf("PullMCP #%d failed: %v", pull, err)
+		}
+		servers, err := ReadMCPServers(claudeJSON)
+		if err != nil {
+			t.Fatalf("ReadMCPServers failed: %v", err)
+		}
+		if _, ok := servers["added"]; !ok {
+			t.Fatalf("pull #%d deleted a server that was added here and never pushed", pull)
+		}
+	}
+
+	result, err := syncer.PushMCP(ctx)
+	if err != nil {
+		t.Fatalf("PushMCP failed: %v", err)
+	}
+	if result.Unchanged || result.ServersPushed != 2 {
+		t.Errorf("the push after the pulls must upload both servers, got Unchanged=%v ServersPushed=%d",
+			result.Unchanged, result.ServersPushed)
+	}
+}
+
 func TestSyncerMCPStatus_NoServers(t *testing.T) {
 	syncer, _, _ := testSyncer(t)
 	ctx := context.Background()
