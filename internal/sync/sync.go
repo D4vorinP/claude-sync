@@ -397,13 +397,13 @@ func (s *Syncer) remoteTimes(ctx context.Context) (map[string]time.Time, error) 
 func (s *Syncer) changedElsewhere(relPath string, remoteTimes map[string]time.Time) bool {
 	st := s.state.GetFile(relPath)
 	lm, ok := remoteTimes[s.remoteKey(relPath)]
-	return ok && st != nil && lm.After(st.Uploaded)
+	return ok && (st == nil || lm.After(st.Uploaded))
 }
 
 // Session transcripts and history.jsonl have guards of their own: a shrunk transcript is not
 // uploaded, a forked one is merged on pull, and history is merged on push and pull alike.
 func (s *Syncer) uploadGuarded(change FileChange) bool {
-	return !isSessionJSONL(change.Path) && change.Path != HistoryFile && s.state.GetFile(change.Path) != nil
+	return !isSessionJSONL(change.Path) && change.Path != HistoryFile
 }
 
 // Holding an upload back leaves its state entry as it is, so the next pull finds both sides changed:
@@ -541,6 +541,9 @@ func (s *Syncer) Pull(ctx context.Context) (*SyncResult, error) {
 			}
 		} else if localInfo.ModTime().Before(remoteObj.LastModified) {
 			shouldDownload = true
+		} else if s.uploadGuarded(FileChange{Path: localPath}) {
+			s.reconcileFirstContact(ctx, localPath, localInfo, remoteObj, result)
+			continue
 		}
 
 		if shouldDownload {
@@ -969,6 +972,37 @@ func (s *Syncer) resolveJSONLConflict(ctx context.Context, relativePath string, 
 		return jsonlMerged, nil
 	}
 	return jsonlConflict, nil
+}
+
+// A file both sides hold that this machine never synced: equal bytes are adopted, different ones are kept
+// apart, so neither side overwrites the other before someone has looked.
+func (s *Syncer) reconcileFirstContact(ctx context.Context, relPath string, local os.FileInfo, remoteObj storage.ObjectInfo, result *SyncResult) {
+	fullPath := filepath.Join(s.claudeDir, relPath)
+	remote, err := s.fetchDecoded(ctx, relPath, remoteObj.Key)
+	if err != nil {
+		result.Errors = append(result.Errors, fmt.Errorf("%s: %w", relPath, err))
+		return
+	}
+	localBytes, err := os.ReadFile(fullPath)
+	if err != nil {
+		result.Errors = append(result.Errors, fmt.Errorf("%s: %w", relPath, err))
+		return
+	}
+	if bytes.Equal(localBytes, remote) {
+		hash, err := HashFile(fullPath)
+		if err != nil {
+			result.Errors = append(result.Errors, fmt.Errorf("%s: %w", relPath, err))
+			return
+		}
+		s.state.UpdateFile(relPath, local, hash)
+		s.state.MarkRemoteSeen(relPath, remoteObj.LastModified)
+		return
+	}
+	result.Conflicts = append(result.Conflicts, relPath)
+	s.progress(ProgressEvent{Action: "conflict", Path: relPath})
+	if err := s.handleConflict(ctx, relPath, remoteObj); err != nil {
+		result.Errors = append(result.Errors, err)
+	}
 }
 
 func (s *Syncer) handleConflict(ctx context.Context, relativePath string, remoteObj storage.ObjectInfo) error {

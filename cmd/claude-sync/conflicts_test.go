@@ -182,3 +182,71 @@ func TestInteractiveKeepRemoteRecordsTheStorageTime(t *testing.T) {
 
 	assertKeptRemote(t, state, conflicts[0], seen)
 }
+
+func firstContactFixture(t *testing.T) (claudeDir string, state *sync.SyncState, conflicts []conflictFile) {
+	t.Helper()
+	claudeDir = t.TempDir()
+	path := filepath.Join(claudeDir, "settings.json")
+	if err := os.WriteFile(path, []byte("local\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path+".conflict.20261119-181816", []byte("remote\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var err error
+	state, err = sync.LoadStateFromDir(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	conflicts, err = findConflicts(claudeDir)
+	if err != nil || len(conflicts) != 1 {
+		t.Fatalf("findConflicts = %v, %v; want one conflict", conflicts, err)
+	}
+	return claudeDir, state, conflicts
+}
+
+func TestKeepLocalWithoutStateRegistersTheFileForThePush(t *testing.T) {
+	claudeDir, state, conflicts := firstContactFixture(t)
+
+	if err := batchResolveConflicts(conflicts, "local", claudeDir, state); err != nil {
+		t.Fatal(err)
+	}
+
+	entry := state.GetFile("settings.json")
+	if entry == nil {
+		t.Fatal("a kept file with no state stays unregistered, so the push holds it forever")
+	}
+	if time.Since(entry.Uploaded) > time.Minute || entry.Uploaded.IsZero() {
+		t.Errorf("Uploaded = %v, want about now so the push guard lets it through", entry.Uploaded)
+	}
+	changes, err := state.DetectChanges(claudeDir, []string{"settings.json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 1 || changes[0].Action != "modify" {
+		t.Errorf("changes = %+v, want the kept file to read as modified so the push uploads it", changes)
+	}
+}
+
+func TestKeepRemoteWithoutStateRecordsTheFile(t *testing.T) {
+	claudeDir, state, conflicts := firstContactFixture(t)
+
+	if err := batchResolveConflicts(conflicts, "remote", claudeDir, state); err != nil {
+		t.Fatal(err)
+	}
+
+	entry := state.GetFile("settings.json")
+	if entry == nil {
+		t.Fatal("the kept remote file was not recorded as synced")
+	}
+	if entry.Uploaded.IsZero() {
+		t.Error("Uploaded is zero, so every later push would hold the file as changed elsewhere")
+	}
+	changes, err := state.DetectChanges(claudeDir, []string{"settings.json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 0 {
+		t.Errorf("changes = %+v, want none after taking R2's version", changes)
+	}
+}

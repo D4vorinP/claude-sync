@@ -1149,7 +1149,7 @@ func pushCmd() *cobra.Command {
 					}
 
 					if len(result.ChangedOnBoth) > 0 {
-						fmt.Printf("\n%sChanged here and on the other machine, not uploaded (the next pull keeps yours and saves theirs as .conflict):%s\n", colorYellow, colorReset)
+						fmt.Printf("\n%sChanged here and on the other machine, or never synced here but already in R2, not uploaded (the next pull keeps yours and saves theirs as .conflict unless they are identical):%s\n", colorYellow, colorReset)
 						for _, p := range result.ChangedOnBoth {
 							fmt.Printf("  ! %s\n", p)
 						}
@@ -1617,25 +1617,31 @@ func findConflicts(claudeDir string) ([]conflictFile, error) {
 
 // Keeping local leaves the state alone: its hash is still the last synced one, so the next push
 // uploads the kept version. Keeping remote records the bucket time the pull saw for that version.
+// A file with no state yet was never synced here, so either choice registers it as seen now; a kept
+// local file gets an empty hash, which differs from any content, so the push uploads it.
 func recordResolution(state *sync.SyncState, claudeDir string, c conflictFile, keptRemote bool) {
-	if !keptRemote {
-		return
-	}
 	rel, err := filepath.Rel(claudeDir, c.OriginalPath)
 	if err != nil {
 		return
 	}
 	rel = filepath.ToSlash(rel)
+	prev := state.GetFile(rel)
+	if !keptRemote && prev != nil {
+		return
+	}
 	info, err := os.Stat(c.OriginalPath)
 	if err != nil {
 		return
 	}
-	hash, err := sync.HashFile(c.OriginalPath)
-	if err != nil {
-		return
+	hash := ""
+	if keptRemote {
+		var err error
+		if hash, err = sync.HashFile(c.OriginalPath); err != nil {
+			return
+		}
 	}
-	var seen time.Time
-	if prev := state.GetFile(rel); prev != nil {
+	seen := time.Now()
+	if prev != nil {
 		seen = prev.Uploaded
 	}
 	state.UpdateFile(rel, info, hash)
